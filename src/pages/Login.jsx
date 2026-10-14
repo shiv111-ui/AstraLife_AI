@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import {
   Activity,
   Ambulance,
@@ -12,7 +17,10 @@ import {
   LockKeyhole,
   Mail,
   ShieldCheck,
+  LoaderCircle,
 } from "lucide-react";
+
+import { auth, db } from "../assets/firebase";
 
 const staffRoles = [
   {
@@ -35,26 +43,37 @@ const staffRoles = [
   },
 ];
 
+const roleRoutes = {
+  ambulance: "/ambulance",
+  hospital: "/hospital",
+  "control-room": "/control-room",
+};
+
 function Login() {
+  const navigate = useNavigate();
+
   const [selectedRole, setSelectedRole] = useState("ambulance");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleLogin(event) {
+  async function handleLogin(event) {
     event.preventDefault();
 
     setError("");
     setMessage("");
 
-    if (!email.trim()) {
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail) {
       setError("Please enter your authorized staff email.");
       return;
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
       setError("Please enter a valid email address.");
       return;
     }
@@ -64,11 +83,126 @@ function Login() {
       return;
     }
 
-    // Authentication has not been implemented yet.
-    // Do not grant dashboard access based on this form.
-    setMessage(
-      "Login interface validated. Staff authentication is not configured yet."
-    );
+    setLoading(true);
+
+    let signedInUser = null;
+
+    try {
+      // Step 1: Authenticate using Firebase Authentication.
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        trimmedEmail,
+        password
+      );
+
+      signedInUser = credential.user;
+
+      // Step 2: Fetch the staff record using the authenticated UID.
+      const staffRef = doc(db, "Staff", signedInUser.uid);
+      const staffSnapshot = await getDoc(staffRef);
+
+      console.log("Authenticated UID:", signedInUser.uid);
+      console.log("Authenticated email:", signedInUser.email);
+      console.log("Staff document path:", staffRef.path);
+      console.log("Staff document exists:", staffSnapshot.exists());
+      console.log("Firebase project ID:", db.app.options.projectId);
+
+      if (staffSnapshot.exists()) {
+        console.log("Staff document data:", staffSnapshot.data());
+      }
+
+      // Step 3: Reject accounts without an authorized staff record.
+      if (!staffSnapshot.exists()) {
+        await signOut(auth);
+        setError(
+          "This account is not registered as authorized staff. Contact the administrator."
+        );
+        return;
+      }
+
+      const staffData = staffSnapshot.data();
+
+      // Step 4: Check whether the staff account is active.
+      if (staffData.active !== true) {
+        await signOut(auth);
+        setError(
+          "Your staff account is inactive. Contact the administrator."
+        );
+        return;
+      }
+
+      // Step 5: Validate the role stored in Firestore.
+      if (!Object.prototype.hasOwnProperty.call(roleRoutes, staffData.role)) {
+        await signOut(auth);
+        setError(
+          "Your account has an invalid staff role. Contact the administrator."
+        );
+        return;
+      }
+
+      // Step 6: Ensure the selected department matches the assigned role.
+      if (staffData.role !== selectedRole) {
+        await signOut(auth);
+        setError(
+          "The selected department does not match your authorized staff role."
+        );
+        return;
+      }
+
+      // Step 7: Redirect to the authorized dashboard.
+      setMessage("Login successful. Redirecting to your dashboard...");
+
+      navigate(roleRoutes[staffData.role], { replace: true });
+    } catch (firebaseError) {
+      console.error("Staff login error:", firebaseError);
+
+      // If authentication succeeded but a later operation failed,
+      // sign out to avoid leaving an unauthorized session active.
+      if (signedInUser) {
+        try {
+          await signOut(auth);
+        } catch (signOutError) {
+          console.error("Sign-out error:", signOutError);
+        }
+      }
+
+      switch (firebaseError.code) {
+        case "auth/invalid-credential":
+        case "auth/user-not-found":
+        case "auth/wrong-password":
+          setError("Invalid email or password.");
+          break;
+
+        case "auth/invalid-email":
+          setError("Please enter a valid email address.");
+          break;
+
+        case "auth/too-many-requests":
+          setError(
+            "Too many unsuccessful attempts. Please wait and try again."
+          );
+          break;
+
+        case "auth/network-request-failed":
+          setError(
+            "Network error. Check your internet connection and try again."
+          );
+          break;
+
+        case "permission-denied":
+          setError(
+            "Access to the staff record was denied. Check your Firestore security rules."
+          );
+          break;
+
+        default:
+          setError(
+            "Unable to sign in. Check your connection and Firebase configuration, then try again."
+          );
+      }
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -89,6 +223,7 @@ function Login() {
               <h1 className="text-xl font-bold tracking-wide">
                 Astralife <span className="text-cyan-400">AI</span>
               </h1>
+
               <p className="text-xs text-slate-400">
                 Emergency Response Coordination
               </p>
@@ -178,13 +313,14 @@ function Login() {
                       <button
                         key={role.id}
                         type="button"
+                        disabled={loading}
                         aria-pressed={isSelected}
                         onClick={() => {
                           setSelectedRole(role.id);
                           setError("");
                           setMessage("");
                         }}
-                        className={`flex w-full items-center gap-4 rounded-xl border p-4 text-left transition ${
+                        className={`flex w-full items-center gap-4 rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
                           isSelected
                             ? "border-cyan-400 bg-cyan-400/10"
                             : "border-white/10 bg-slate-950/50 hover:border-white/25"
@@ -204,6 +340,7 @@ function Login() {
                           <h3 className="text-sm font-semibold">
                             {role.title}
                           </h3>
+
                           <p className="mt-1 text-xs text-slate-400">
                             {role.description}
                           </p>
@@ -240,12 +377,13 @@ function Login() {
                     autoComplete="username"
                     placeholder="staff@example.com"
                     value={email}
+                    disabled={loading}
                     onChange={(event) => {
                       setEmail(event.target.value);
                       setError("");
                       setMessage("");
                     }}
-                    className="w-full bg-transparent py-3.5 text-sm text-white outline-none placeholder:text-slate-600"
+                    className="w-full bg-transparent py-3.5 text-sm text-white outline-none placeholder:text-slate-600 disabled:opacity-60"
                   />
                 </div>
               </div>
@@ -271,19 +409,23 @@ function Login() {
                     autoComplete="current-password"
                     placeholder="Enter your password"
                     value={password}
+                    disabled={loading}
                     onChange={(event) => {
                       setPassword(event.target.value);
                       setError("");
                       setMessage("");
                     }}
-                    className="w-full bg-transparent py-3.5 text-sm text-white outline-none placeholder:text-slate-600"
+                    className="w-full bg-transparent py-3.5 text-sm text-white outline-none placeholder:text-slate-600 disabled:opacity-60"
                   />
 
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                    className="shrink-0 text-slate-500 hover:text-white"
+                    disabled={loading}
+                    onClick={() => setShowPassword((previous) => !previous)}
+                    aria-label={
+                      showPassword ? "Hide password" : "Show password"
+                    }
+                    className="shrink-0 text-slate-500 hover:text-white disabled:opacity-50"
                   >
                     {showPassword ? (
                       <EyeOff size={19} />
@@ -294,20 +436,21 @@ function Login() {
                 </div>
               </div>
 
-              {/* Feedback */}
+              {/* Error feedback */}
               {error && (
                 <div
                   role="alert"
-                  className="mb-5 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+                  className="mb-5 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm leading-6 text-red-300"
                 >
                   {error}
                 </div>
               )}
 
+              {/* Success feedback */}
               {message && (
                 <div
                   role="status"
-                  className="mb-5 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-200"
+                  className="mb-5 rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm leading-6 text-emerald-200"
                 >
                   {message}
                 </div>
@@ -315,10 +458,20 @@ function Login() {
 
               <button
                 type="submit"
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-400 px-5 py-3.5 font-semibold text-slate-950 transition hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-slate-900"
+                disabled={loading}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-400 px-5 py-3.5 font-semibold text-slate-950 transition hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Continue to Portal
-                <ArrowRight size={18} />
+                {loading ? (
+                  <>
+                    <LoaderCircle size={18} className="animate-spin" />
+                    Verifying staff...
+                  </>
+                ) : (
+                  <>
+                    Continue to Portal
+                    <ArrowRight size={18} />
+                  </>
+                )}
               </button>
             </form>
 
