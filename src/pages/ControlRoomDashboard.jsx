@@ -1,4 +1,7 @@
 import { useMemo, useState } from "react";
+import { signOut } from "firebase/auth";
+import { useNavigate } from "react-router-dom";
+import { auth } from "../assets/firebase";
 import {
   Activity,
   AlertTriangle,
@@ -13,6 +16,7 @@ import {
   Filter,
   Hospital,
   Info,
+  LogOut,
   MapPin,
   Menu,
   Navigation,
@@ -230,6 +234,18 @@ export default function ControlRoomDashboard() {
     window.setTimeout(() => setNotification(""), 3000);
   }
 
+  const navigate = useNavigate();
+
+  async function handleLogout() {
+    try {
+      await signOut(auth);
+      navigate("/login", { replace: true });
+    } catch (error) {
+      console.error("Logout failed:", error);
+      notify("Unable to log out. Please try again.");
+    }
+  }
+
   function updateIncident(id, changes) {
     setIncidents((previous) =>
       previous.map((item) =>
@@ -382,6 +398,14 @@ export default function ControlRoomDashboard() {
           </a>
 
           <div className="hidden items-center gap-3 md:flex">
+            <button
+              type="button"
+              onClick={handleLogout}
+              className={secondaryButton}
+            >
+              <LogOut size={16} />
+              Logout
+            </button>
             <span className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-300">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
               Demo system online
@@ -411,9 +435,18 @@ export default function ControlRoomDashboard() {
 
         {menuOpen && (
           <div className="border-t border-slate-800 bg-slate-900 p-4 md:hidden">
-            <p className="text-sm text-emerald-300">
+            <p className="mb-3 text-sm text-emerald-300">
               Demonstration system online
             </p>
+                
+            <button
+              type="button"
+              onClick={handleLogout}
+              className={`${secondaryButton} w-full`}
+            >
+              <LogOut size={16} />
+              Logout
+            </button>
           </div>
         )}
       </header>

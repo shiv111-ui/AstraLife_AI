@@ -1,3 +1,7 @@
+import { signOut } from "firebase/auth";
+import { useNavigate } from "react-router-dom";
+import { auth } from "../assets/firebase";
+
 import { useMemo, useState } from "react";
 import {
   Activity,
@@ -24,6 +28,7 @@ import {
   UserRound,
   Users,
   Wifi,
+  LogOut,
   X,
 } from "lucide-react";
 
@@ -269,6 +274,18 @@ export default function HospitalDashboard() {
     window.setTimeout(() => setNotification(""), 3000);
   }
 
+  const navigate = useNavigate();
+
+  async function handleLogout() {
+    try {
+      await signOut(auth);
+      navigate("/login", { replace: true });
+    } catch (error) {
+      console.error("Logout failed:", error);
+      notify("Unable to log out. Please try again.");
+    }
+  }
+
   function updateCaseStatus(id, status) {
     setCases((previous) =>
       previous.map((item) =>
@@ -356,6 +373,15 @@ export default function HospitalDashboard() {
 
           <button
             type="button"
+            onClick={handleLogout}
+            className={buttonSecondary}
+          >
+            <LogOut size={16} />
+            Logout
+          </button>
+
+          <button
+            type="button"
             onClick={() => setMenuOpen((value) => !value)}
             className="rounded-xl border border-slate-800 bg-slate-900 p-2.5 text-slate-300 md:hidden"
             aria-label="Toggle menu"
@@ -366,14 +392,25 @@ export default function HospitalDashboard() {
 
         {menuOpen && (
           <div className="border-t border-slate-800 bg-slate-900 p-4 md:hidden">
-            <button
-              type="button"
-              onClick={() => setOnline((value) => !value)}
-              className={`${buttonSecondary} w-full`}
-            >
-              <Wifi size={16} />
-              {online ? "Set Unavailable" : "Set Available"}
-            </button>
+            <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => setOnline((value) => !value)}
+                className={`${buttonSecondary} w-full`}
+              >
+                <Wifi size={16} />
+                {online ? "Set Unavailable" : "Set Available"}
+              </button>
+                
+              <button
+                type="button"
+                onClick={handleLogout}
+                className={`${buttonSecondary} w-full`}
+              >
+                <LogOut size={16} />
+                Logout
+              </button>
+            </div>
           </div>
         )}
       </header>

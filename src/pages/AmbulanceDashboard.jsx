@@ -1,3 +1,9 @@
+import { signOut } from "firebase/auth";
+import { useNavigate } from "react-router-dom";
+import { auth } from "../assets/firebase";
+
+
+
 import { useMemo, useState } from "react";
 import {
   Activity,
@@ -246,6 +252,18 @@ export default function AmbulanceDashboard() {
     }, 3500);
   };
 
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      navigate("/login", { replace: true });
+    } catch (error) {
+      console.error("Logout failed:", error);
+      showMessage("Unable to log out. Please try again.", "error");
+    }
+  };
+
   const updateMissionStatus = (missionId, newStatus) => {
     setMissions((currentMissions) =>
       currentMissions.map((mission) =>
@@ -441,6 +459,15 @@ export default function AmbulanceDashboard() {
                 <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500" />
               )}
             </button>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className={secondaryButton}
+            >
+              <LogOut size={16} />
+              Logout
+            </button>    
           </div>
 
           <button
