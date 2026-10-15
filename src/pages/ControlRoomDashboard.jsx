@@ -1,7 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { signOut } from "firebase/auth";
+import {
+  collection,
+  onSnapshot,
+  query,
+  orderBy,
+} from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
-import { auth } from "../assets/firebase";
+import { auth, db } from "../assets/firebase";
 import {
   Activity,
   AlertTriangle,
@@ -194,7 +200,9 @@ function StatusBadge({ status }) {
 }
 
 export default function ControlRoomDashboard() {
-  const [incidents, setIncidents] = useState(INITIAL_INCIDENTS);
+  const [incidents, setIncidents] = useState([]);
+  const [incidentsLoading, setIncidentsLoading] = useState(true);
+  const [incidentsError, setIncidentsError] = useState("");
   const [ambulances, setAmbulances] = useState(INITIAL_AMBULANCES);
   const [selectedId, setSelectedId] = useState("AST-2048");
   const [filter, setFilter] = useState("All");
@@ -207,6 +215,84 @@ export default function ControlRoomDashboard() {
   const [corridorStatus, setCorridorStatus] = useState("Not Requested");
   const [corridorIncidentId, setCorridorIncidentId] = useState("AST-2048");
 
+  useEffect(() => {
+    setIncidentsLoading(true);
+    setIncidentsError("");
+  
+    const incidentsQuery = query(
+      collection(db, "Emergency_Cases"),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(
+      incidentsQuery,
+      (snapshot) => {
+        const firestoreIncidents = snapshot.docs.map((document) => {
+          const data = document.data();
+
+          let reportedAt = "Time unavailable";
+
+          if (data.createdAt?.toDate) {
+            reportedAt = data.createdAt.toDate().toLocaleString();
+          }
+
+          const latitude = data.location?.latitude;
+          const longitude = data.location?.longitude;
+
+          const location =
+            typeof latitude === "number" &&
+            typeof longitude === "number"
+              ? `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+              : "Location unavailable";
+
+          return {
+            id: document.id,
+            emergency: data.EmergencyType || "Unknown emergency",
+            severity: data.Priority || "Moderate",
+            status: data.Status || "Pending",
+            location,
+            latitude,
+            longitude,
+            reportedAt,
+            victims: data.victimCount ?? "Not specified",
+            ambulance: data.ambulanceId || "Unassigned",
+            hospital: data.hospitalId || "Not assigned",
+            notes: data.description || "No additional details provided.",
+            corridor: "Not Requested",
+            patientName: data.patientName ?? null,
+            phone: data.phone ?? null,
+          };
+        });
+
+        setIncidents(firestoreIncidents);
+
+        setSelectedId((currentId) => {
+          if (
+            currentId &&
+            firestoreIncidents.some((item) => item.id === currentId)
+          ) {
+            return currentId;
+          }
+
+          return firestoreIncidents[0]?.id || "";
+        });
+
+        setIncidentsLoading(false);
+      },
+      (error) => {
+        console.error("Control Room Firestore listener failed:", error);
+
+        setIncidentsError(
+          "Unable to load emergency cases. Check your connection and permissions."
+        );
+
+        setIncidentsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+  
   const selectedIncident = incidents.find(
     (item) => item.id === selectedId
   );
@@ -438,7 +524,7 @@ export default function ControlRoomDashboard() {
             <p className="mb-3 text-sm text-emerald-300">
               Demonstration system online
             </p>
-                
+
             <button
               type="button"
               onClick={handleLogout}
@@ -573,6 +659,17 @@ export default function ControlRoomDashboard() {
               </div>
 
               <div className="space-y-3">
+                {incidentsLoading && (
+                  <p className="py-8 text-center text-sm text-slate-400">
+                    Loading emergency cases...
+                  </p>
+                )}
+
+                {!incidentsLoading && incidentsError && (
+                  <p className="py-8 text-center text-sm text-red-300">
+                    {incidentsError}
+                  </p>
+                )}
                 {filteredIncidents.map((incident) => (
                   <button
                     type="button"
@@ -636,7 +733,9 @@ export default function ControlRoomDashboard() {
                   </button>
                 ))}
 
-                {filteredIncidents.length === 0 && (
+                {!incidentsLoading &&
+                  !incidentsError &&
+                  filteredIncidents.length === 0 && (
                   <p className="py-8 text-center text-sm text-slate-500">
                     No incidents match this filter.
                   </p>

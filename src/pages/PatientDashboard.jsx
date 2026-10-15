@@ -1,3 +1,6 @@
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { db } from "../assets/firebase";
+
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -324,12 +327,12 @@ export default function PatientDashboard() {
   };
 
   // Create a demonstration request.
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
     setFormError("");
-
+    
     const validationError = validateForm();
-
+    
     if (validationError) {
       setFormError(validationError);
       return;
@@ -337,32 +340,68 @@ export default function PatientDashboard() {
 
     setSubmitting(true);
 
-    setTimeout(() => {
-      const emergencyId = `AST-${Date.now()
-        .toString()
-        .slice(-8)}`;
-
-      setEmergency({
-        id: emergencyId,
-        patientName: form.patientName.trim() || "Unknown",
-        phone: form.phone.trim() || "Not provided",
-        emergencyType: form.emergencyType,
-        severity: form.severity,
-        victimCount: showVictimCount ? form.victimCount : null,
-        description:
-          form.description.trim() ||
-          "No additional details provided.",
+    try {
+      const incidentData = {
+        EmergencyType: form.emergencyType,
+        Priority: form.severity,
+        Status: "Pending",
+      
+        // Optional fields: null when left blank
+        patientName: form.patientName.trim() || null,
+        phone: form.phone.trim() || null,
+        description: form.description.trim() || null,
+      
+        victimCount: showVictimCount
+          ? form.victimCount
+          : null,
+      
         location: {
           latitude: location.latitude,
           longitude: location.longitude,
           source: location.source,
         },
+      
+        ambulanceId: null,
+        hospitalId: null,
+      
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+    
+      // Save the emergency request to Firestore
+      const documentRef = await addDoc(
+        collection(db, "Emergency_Cases"),
+        incidentData
+      );
+    
+      // Generate a display reference from the Firestore document ID
+      const emergencyId = `AST-${documentRef.id
+        .slice(-8)
+        .toUpperCase()}`;
+      
+      // Show confirmation only after Firestore saves successfully
+      setEmergency({
+        id: emergencyId,
+        patientName: incidentData.patientName || "Not provided",
+        phone: incidentData.phone || "Not provided",
+        emergencyType: incidentData.EmergencyType,
+        severity: incidentData.Priority,
+        victimCount: incidentData.victimCount,
+        description:
+          incidentData.description || "No additional details provided.",
+        location: incidentData.location,
         status: "Created · Not Dispatched",
         createdAt: new Date().toLocaleString(),
       });
-
+    } catch (error) {
+      console.error("Emergency submission failed:", error);
+    
+      setFormError(
+        "Unable to save your emergency request. Please check your connection and try again."
+      );
+    } finally {
       setSubmitting(false);
-    }, 700);
+    }
   };
 
   // Emergency confirmation screen.
