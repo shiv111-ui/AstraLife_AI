@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Siren,
@@ -9,74 +9,256 @@ import {
   MicOff,
 } from "lucide-react";
 
+/*
+ * Normalize speech-recognition output.
+ * Declared outside Home to avoid initialization-order errors.
+ */
+function normalizeSpeech(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/*
+ * Recognize Nova, Noava, and similar pronunciations.
+ */
+function containsWakeWord(text) {
+  const normalized = normalizeSpeech(text);
+
+  const wakePatterns = [
+    /\bhey\s+nova\b/,
+    /\bhey\s+noava\b/,
+    /\bhey\s+noova\b/,
+    /\bhey\s+noba\b/,
+    /\bhey\s+novah\b/,
+    /\bhey\s+no\s+va\b/,
+    /\bhi\s+nova\b/,
+    /\bhi\s+noava\b/,
+    /\bhello\s+nova\b/,
+    /\bhello\s+noava\b/,
+    /\bokay\s+nova\b/,
+    /\bok\s+nova\b/,
+    /\bnova\b/,
+    /\bnoava\b/,
+    /\bnoova\b/,
+    /\bnoba\b/,
+    /\bnovah\b/,
+    /\bno\s+va\b/,
+  ];
+
+  return wakePatterns.some((pattern) => pattern.test(normalized));
+}
+
+/*
+ * Recognize emergency commands and common recognition variations.
+ */
+function containsEmergencyCommand(text) {
+  const normalized = normalizeSpeech(text);
+
+  const emergencyPatterns = [
+    /\bhelp\b/,
+    /\bhepl\b/,
+    /\bhellp\b/,
+    /\bhelp me\b/,
+    /\bmedical help\b/,
+    /\bmedical emergency\b/,
+    /\bsend sos\b/,
+    /\btrigger sos\b/,
+    /\bemergency help\b/,
+    /\bemergency\b/,
+    /\bsos\b/,
+    /\bcall ambulance\b/,
+    /\bsend ambulance\b/,
+    /\bambulance\b/,
+    /\broad accident\b/,
+    /\bcar accident\b/,
+    /\bvehicle accident\b/,
+    /\bheart attack\b/,
+    /\bcardiac emergency\b/,
+    /\bcannot breathe\b/,
+    /\bcan't breathe\b/,
+    /\bcan not breathe\b/,
+    /\bbreathing difficulty\b/,
+    /\bdifficulty breathing\b/,
+    /\bshortness of breath\b/,
+    /\bpregnancy emergency\b/,
+    /\bfire emergency\b/,
+  ];
+
+  return emergencyPatterns.some((pattern) => pattern.test(normalized));
+}
+
+/*
+ * Remove a wake phrase to identify a command spoken in the same sentence.
+ */
+function removeWakeWord(text) {
+  return normalizeSpeech(text)
+    .replace(
+      /\b(hey|hi|hello|okay|ok)\s+(nova|noava|noova|noba|novah)\b/g,
+      " "
+    )
+    .replace(/\b(nova|noava|noova|noba|novah)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function Home() {
   const navigate = useNavigate();
 
   const recognitionRef = useRef(null);
+  const listeningRef = useRef(false);
   const triggeredRef = useRef(false);
-  const listeningEnabledRef = useRef(false);
-  const armedRef = useRef(false);
-  const restartTimerRef = useRef(null);
   const mountedRef = useRef(false);
+  const restartTimerRef = useRef(null);
+  const armedRef = useRef(false);
+  const manuallyStoppedRef = useRef(false);
 
   const [listening, setListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(true);
-  const [armed, setArmed] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState(
-    'Starting voice assistant. Say "Hey Astra"...'
+    'Listening for "Hey Nova" or "Help"...'
   );
+  const [wakeDetected, setWakeDetected] = useState(false);
 
-  const normalizeSpeech = (text) =>
-    text
-      .toLowerCase()
-      .replace(/[.,!?]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  /*
+   * Keep React state and refs synchronized.
+   */
+  const updateListening = useCallback((value) => {
+    listeningRef.current = value;
+    setListening(value);
+  }, []);
 
-  const isEmergencyCommand = (text) => {
-    const commandPattern =
-      /\b(help|help me|medical help|medical emergency|send sos|emergency help|call ambulance|road accident|heart attack|cannot breathe|can't breathe|can not breathe|breathing difficulty|pregnancy emergency|fire emergency)\b/i;
-
-    return commandPattern.test(text);
-  };
-
-  const triggerSOS = () => {
-    if (triggeredRef.current) return;
-
-    triggeredRef.current = true;
-    listeningEnabledRef.current = false;
-    armedRef.current = false;
-
-    setListening(false);
-    setArmed(false);
-
+  /*
+   * Clear the automatic restart timer.
+   */
+  const clearRestartTimer = useCallback(() => {
     if (restartTimerRef.current) {
       clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+  }, []);
+
+  /*
+   * Stop speech recognition safely.
+   */
+  const stopRecognition = useCallback(() => {
+    clearRestartTimer();
+
+    const recognition = recognitionRef.current;
+
+    if (recognition) {
+      try {
+        recognition.stop();
+      } catch {
+        // Recognition may already be stopped.
+      }
     }
 
-    try {
-      recognitionRef.current?.stop();
-    } catch {
-      // Recognition may already be stopped.
+    updateListening(false);
+  }, [clearRestartTimer, updateListening]);
+
+  /*
+   * Trigger emergency navigation only once.
+   */
+  const triggerSOS = useCallback(() => {
+    if (triggeredRef.current) {
+      return;
     }
 
-    setVoiceMessage("Emergency command detected. Opening Patient Dashboard...");
+    triggeredRef.current = true;
+    armedRef.current = false;
+    manuallyStoppedRef.current = true;
+
+    setWakeDetected(false);
+    setVoiceMessage("Emergency command detected. Opening SOS...");
+
+    stopRecognition();
 
     navigate("/patient", {
-      state: { startSOS: true },
+      state: {
+        startSOS: true,
+      },
     });
-  };
+  }, [navigate, stopRecognition]);
 
+  /*
+   * Handle recognized speech.
+   *
+   * Help / Hepl:
+   *   Trigger SOS immediately.
+   *
+   * Nova / Noava / Hey Nova:
+   *   Activate the assistant and wait for a command.
+   *
+   * Hey Nova, Call Ambulance:
+   *   Trigger SOS immediately.
+   */
+  const handleRecognizedSpeech = useCallback(
+    (rawText) => {
+      const text = normalizeSpeech(rawText);
+
+      if (!text || triggeredRef.current) {
+        return;
+      }
+
+      setVoiceMessage(`Heard: "${text}"`);
+
+      // Direct emergency command without a wake phrase.
+      if (containsEmergencyCommand(text)) {
+        triggerSOS();
+        return;
+      }
+
+      // Recognize Nova and similar pronunciations.
+      if (containsWakeWord(text)) {
+        armedRef.current = true;
+        setWakeDetected(true);
+
+        const remainingText = removeWakeWord(text);
+
+        // Handle wake phrase and command spoken together.
+        if (containsEmergencyCommand(remainingText)) {
+          triggerSOS();
+          return;
+        }
+
+        setVoiceMessage(
+          'Nova activated. Say "Help" or an emergency command.'
+        );
+
+        return;
+      }
+
+      // Nova has already been activated. Wait for the next command.
+      if (armedRef.current) {
+        setVoiceMessage(
+          'Nova is ready. Say "Help" or an emergency command.'
+        );
+      }
+    },
+    [triggerSOS]
+  );
+
+  /*
+   * Initialize browser speech recognition.
+   */
   useEffect(() => {
     mountedRef.current = true;
+    manuallyStoppedRef.current = false;
 
     const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       setVoiceSupported(false);
+
       setVoiceMessage(
-        "Speech recognition is not supported in this browser. Use the manual SOS button."
+        "Voice recognition is unavailable. Please use Chrome or Edge."
       );
 
       return () => {
@@ -89,151 +271,163 @@ function Home() {
     recognition.lang = "en-IN";
     recognition.continuous = true;
     recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 5;
+
+    recognitionRef.current = recognition;
 
     recognition.onstart = () => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) {
+        return;
+      }
 
-      setListening(true);
-      setVoiceMessage('Listening for "Hey Astra"...');
+      updateListening(true);
+
+      setVoiceMessage(
+        armedRef.current
+          ? 'Nova is ready. Say "Help".'
+          : 'Listening for "Hey Nova" or "Help"...'
+      );
     };
 
     recognition.onresult = (event) => {
-      if (triggeredRef.current) return;
+      for (
+        let i = event.resultIndex;
+        i < event.results.length;
+        i += 1
+      ) {
+        const result = event.results[i];
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (!event.results[i].isFinal) continue;
-
-        const spokenText = normalizeSpeech(
-          event.results[i][0].transcript
-        );
-
-        setVoiceMessage(`Heard: "${spokenText}"`);
-
-        const wakePhrase = /\bhey\s+astra\b/i;
-
-        if (wakePhrase.test(spokenText)) {
-          const commandAfterWake = spokenText
-            .replace(wakePhrase, "")
-            .trim();
-
-          // Example: "Hey Astra, Medical Help"
-          if (isEmergencyCommand(commandAfterWake)) {
-            triggerSOS();
-            return;
-          }
-
-          // Example: "Hey Astra" followed by "Help"
-          armedRef.current = true;
-          setArmed(true);
-
-          setVoiceMessage(
-            'Hey Astra activated. Now say "Help" or "Medical Help".'
-          );
-
+        if (!result.isFinal || triggeredRef.current) {
           continue;
         }
 
-        // Accept an emergency command after the wake phrase.
-        if (armedRef.current && isEmergencyCommand(spokenText)) {
-          triggerSOS();
+        /*
+         * Check multiple recognition alternatives to improve
+         * the chances of matching pronunciation variations.
+         */
+        const alternatives = [];
+
+        for (let j = 0; j < result.length; j += 1) {
+          alternatives.push(result[j].transcript || "");
+        }
+
+        const recognizedText = alternatives.find((transcript) => {
+          const normalized = normalizeSpeech(transcript);
+
+          return (
+            containsWakeWord(normalized) ||
+            containsEmergencyCommand(normalized)
+          );
+        });
+
+        handleRecognizedSpeech(
+          recognizedText || alternatives[0] || ""
+        );
+
+        if (triggeredRef.current) {
           return;
         }
       }
     };
 
     recognition.onerror = (event) => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) {
+        return;
+      }
+
+      updateListening(false);
 
       if (
         event.error === "not-allowed" ||
         event.error === "service-not-allowed"
       ) {
-        listeningEnabledRef.current = false;
-        setListening(false);
+        manuallyStoppedRef.current = true;
 
         setVoiceMessage(
-          "Chrome blocked automatic microphone access or speech recognition. Use the manual SOS button."
+          "Microphone access denied. Allow microphone access in Chrome."
         );
       } else if (event.error === "audio-capture") {
-        listeningEnabledRef.current = false;
-        setListening(false);
-
         setVoiceMessage(
           "No microphone detected. Check your microphone connection."
         );
-      } else if (event.error !== "no-speech" && event.error !== "aborted") {
+      } else if (event.error === "no-speech") {
         setVoiceMessage(
-          `Voice recognition error: ${event.error}. Attempting to restart...`
+          'No speech detected. Listening will restart automatically.'
+        );
+      } else if (event.error === "network") {
+        setVoiceMessage(
+          "Speech recognition network error. Check your internet connection."
+        );
+      } else if (event.error !== "aborted") {
+        setVoiceMessage(
+          `Voice recognition error: ${event.error}`
         );
       }
     };
 
+    /*
+     * Restart recognition when Chrome ends the session.
+     * Do not restart after manual stop or SOS activation.
+     */
     recognition.onend = () => {
-      if (!mountedRef.current) return;
-
-      setListening(false);
+      updateListening(false);
 
       if (
-        listeningEnabledRef.current &&
-        !triggeredRef.current
+        !mountedRef.current ||
+        triggeredRef.current ||
+        manuallyStoppedRef.current
       ) {
-        if (restartTimerRef.current) {
-          clearTimeout(restartTimerRef.current);
+        return;
+      }
+
+      clearRestartTimer();
+
+      restartTimerRef.current = setTimeout(() => {
+        restartTimerRef.current = null;
+
+        if (
+          !mountedRef.current ||
+          triggeredRef.current ||
+          manuallyStoppedRef.current ||
+          listeningRef.current ||
+          recognitionRef.current !== recognition
+        ) {
+          return;
         }
 
-        restartTimerRef.current = setTimeout(() => {
-          if (
-            !mountedRef.current ||
-            !listeningEnabledRef.current ||
-            triggeredRef.current
-          ) {
-            return;
-          }
-
-          try {
-            recognition.start();
-          } catch {
+        try {
+          recognition.start();
+        } catch (error) {
+          if (error.name !== "InvalidStateError") {
             setVoiceMessage(
-              "Automatic listening could not restart. Chrome may require a user gesture."
+              'Voice recognition stopped. Click "Start Listening" to resume.'
             );
           }
-        }, 1000);
-      }
+        }
+      }, 800);
     };
 
-    recognitionRef.current = recognition;
-
     /*
-     * Attempt hands-free startup.
-     *
-     * Chrome may reject this because speech recognition can require
-     * a user gesture. Microphone permission alone does not guarantee
-     * that automatic startup is permitted.
+     * Attempt automatic startup.
+     * Some browsers require a user gesture first.
      */
-    listeningEnabledRef.current = true;
-
     try {
       recognition.start();
     } catch {
-      listeningEnabledRef.current = false;
-
       setVoiceMessage(
-        'Chrome did not allow automatic startup. If needed, use "Start Voice Listening" below.'
+        'Click "Start Listening" to activate Nova.'
       );
     }
 
     return () => {
       mountedRef.current = false;
-      listeningEnabledRef.current = false;
+      manuallyStoppedRef.current = true;
 
-      if (restartTimerRef.current) {
-        clearTimeout(restartTimerRef.current);
-      }
+      clearRestartTimer();
 
+      recognition.onstart = null;
       recognition.onresult = null;
       recognition.onerror = null;
-      recognition.onstart = null;
       recognition.onend = null;
 
       try {
@@ -241,58 +435,67 @@ function Home() {
       } catch {
         // Ignore cleanup errors.
       }
-    };
-  }, []);
 
-  // Fallback if Chrome blocks automatic startup.
-  const startVoiceListening = () => {
+      recognitionRef.current = null;
+    };
+  }, [
+    clearRestartTimer,
+    handleRecognizedSpeech,
+    updateListening,
+  ]);
+
+  /*
+   * Manual listening control.
+   */
+  const startListening = () => {
     const recognition = recognitionRef.current;
 
-    if (!recognition || listeningEnabledRef.current) return;
+    if (!recognition || listeningRef.current) {
+      return;
+    }
 
     triggeredRef.current = false;
+    manuallyStoppedRef.current = false;
     armedRef.current = false;
-    listeningEnabledRef.current = true;
 
-    setArmed(false);
-    setVoiceMessage('Listening for "Hey Astra"...');
+    setWakeDetected(false);
+    clearRestartTimer();
 
     try {
       recognition.start();
-    } catch {
-      listeningEnabledRef.current = false;
 
       setVoiceMessage(
-        "Could not start voice recognition. Check Chrome microphone permissions and try again."
+        'Listening for "Hey Nova" or "Help"...'
       );
+    } catch (error) {
+      if (error.name === "InvalidStateError") {
+        setVoiceMessage("Voice recognition is already starting.");
+      } else {
+        setVoiceMessage(
+          "Could not start voice recognition. Please try again."
+        );
+      }
     }
   };
 
-  const stopVoiceListening = () => {
-    listeningEnabledRef.current = false;
+  const handleStopListening = () => {
+    manuallyStoppedRef.current = true;
     armedRef.current = false;
 
-    setListening(false);
-    setArmed(false);
+    setWakeDetected(false);
 
-    if (restartTimerRef.current) {
-      clearTimeout(restartTimerRef.current);
-    }
-
-    try {
-      recognitionRef.current?.stop();
-    } catch {
-      // Recognition may already be stopped.
-    }
+    stopRecognition();
 
     setVoiceMessage(
-      "Voice listening stopped. The manual SOS button remains available."
+      "Voice listening stopped. Use Start Listening to resume."
     );
   };
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-5 py-12 text-white sm:px-6">
+      {/* Background effects */}
       <div className="pointer-events-none absolute -left-32 -top-32 h-80 w-80 rounded-full bg-red-600/10 blur-3xl" />
+
       <div className="pointer-events-none absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-cyan-500/10 blur-3xl" />
 
       <main className="relative z-10 mx-auto w-full max-w-3xl text-center">
@@ -313,19 +516,19 @@ function Home() {
         </p>
 
         <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-500">
-          Connecting patients, ambulances, hospitals, and control rooms
-          for faster emergency response.
+          Connecting patients, ambulances, hospitals, and control
+          rooms for faster emergency response.
         </p>
 
-        {/* Manual SOS */}
+        {/* SOS button */}
         <div className="mx-auto mt-10 w-full max-w-md">
           <button
             type="button"
             onClick={triggerSOS}
-            className="group flex min-h-48 w-full flex-col items-center justify-center rounded-3xl border border-red-400/30 bg-gradient-to-br from-red-600 to-red-700 px-6 py-7 shadow-xl shadow-red-950/40 transition duration-200 hover:-translate-y-1 hover:from-red-500 hover:to-red-600 hover:shadow-2xl focus:outline-none focus:ring-4 focus:ring-red-400/40"
+            className="group flex min-h-48 w-full flex-col items-center justify-center rounded-3xl border border-red-400/30 bg-gradient-to-br from-red-600 to-red-700 px-6 py-7 shadow-xl shadow-red-950/40 transition duration-200 hover:-translate-y-1 hover:from-red-500 hover:to-red-600 focus:outline-none focus:ring-4 focus:ring-red-400/40"
             aria-label="Trigger emergency SOS"
           >
-            <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 transition group-hover:scale-105">
+            <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10">
               <Siren size={40} />
             </span>
 
@@ -339,94 +542,100 @@ function Home() {
 
             <span className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-white/80">
               Tap to send SOS
-              <ArrowRight
-                size={15}
-                className="transition group-hover:translate-x-1"
-              />
+              <ArrowRight size={15} />
             </span>
           </button>
 
-          {/* Hey Astra */}
-          <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
-            <p className="text-lg font-bold text-white">Hey Astra</p>
-
-            <p className="mt-1 text-sm text-slate-400">
-              Voice-activated emergency assistance
-            </p>
-
-            <div className="mt-4 flex items-center justify-center gap-2">
+          {/* Voice assistant */}
+          <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+            <div className="mb-3 flex items-center justify-center gap-2">
               <span
-                className={`h-2.5 w-2.5 rounded-full ${
+                className={`h-3 w-3 rounded-full ${
                   listening
-                    ? armed
-                      ? "animate-pulse bg-emerald-400"
-                      : "animate-pulse bg-cyan-400"
-                    : "bg-slate-600"
+                    ? "animate-pulse bg-cyan-400"
+                    : voiceSupported
+                    ? "bg-slate-500"
+                    : "bg-red-500"
                 }`}
               />
 
-              <span className="text-xs font-medium text-slate-400">
-                {!listening
-                  ? "Voice assistant inactive"
-                  : armed
-                    ? "Wake word detected — waiting for command"
-                    : "Listening for Hey Astra"}
-              </span>
+              <h2 className="text-2xl font-bold">
+                Hey Nova
+              </h2>
             </div>
 
+            <p className="text-sm text-slate-400">
+              Voice-activated emergency assistance
+            </p>
+
+            <p className="mt-4 text-sm font-medium text-cyan-300">
+              {!voiceSupported
+                ? "Voice recognition unavailable"
+                : listening
+                ? wakeDetected
+                  ? "Nova activated. Listening for a command."
+                  : "Listening for Hey Nova or Help"
+                : "Voice assistant is not listening"}
+            </p>
+
             <p
-              className="mt-3 text-sm leading-6 text-slate-300"
               role="status"
               aria-live="polite"
+              className="mt-4 min-h-6 text-sm leading-6 text-slate-300"
             >
               {voiceMessage}
             </p>
 
-            {/* Only shown when automatic listening is unavailable or stopped. */}
-            {voiceSupported && !listening && (
-              <button
-                type="button"
-                onClick={startVoiceListening}
-                className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
-              >
-                <Mic size={17} />
-                Start Voice Listening
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={
+                listening
+                  ? handleStopListening
+                  : startListening
+              }
+              disabled={!voiceSupported}
+              className="mt-5 inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-cyan-400/30 bg-slate-800 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {listening ? (
+                <>
+                  <MicOff size={18} />
+                  Stop Listening
+                </>
+              ) : (
+                <>
+                  <Mic size={18} />
+                  Start Listening
+                </>
+              )}
+            </button>
 
-            {listening && (
-              <button
-                type="button"
-                onClick={stopVoiceListening}
-                className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-700"
-              >
-                <MicOff size={17} />
-                Stop Listening
-              </button>
-            )}
-
-            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Voice commands
+            {/* Voice commands */}
+            <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-left">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Voice Commands
               </p>
 
-              <ul className="space-y-2 text-sm text-slate-300">
-                <li>🎙️ "Hey Astra" → then "Help"</li>
-                <li>🎙️ "Hey Astra, Medical Help"</li>
-                <li>🎙️ "Hey Astra, Road Accident"</li>
-                <li>🎙️ "Hey Astra, Call Ambulance"</li>
-                <li>🎙️ "Hey Astra, Breathing Difficulty"</li>
-              </ul>
+              <div className="space-y-2 text-sm leading-6 text-slate-300">
+                <p>🎙️ "Help" → Request emergency assistance</p>
+                <p>🎙️ "Hepl" → Request emergency assistance</p>
+                <p>🎙️ "Nova" or "Noava" → Activate assistant</p>
+                <p>🎙️ "Hey Nova" → Activate assistant</p>
+                <p>🎙️ "Hey Noava, Medical Help"</p>
+                <p>🎙️ "Hey Nova, Road Accident"</p>
+                <p>🎙️ "Hey Nova, Call Ambulance"</p>
+                <p>🎙️ "Hey Nova, Breathing Difficulty"</p>
+              </div>
             </div>
 
-            <p className="mt-3 text-xs leading-5 text-slate-500">
-              Automatic startup is attempted when this page opens. Chrome
-              may still require a user gesture. Voice recognition may stop
-              when the tab is backgrounded or the device is locked.
+            <p className="mt-4 text-xs leading-5 text-slate-500">
+              Automatic startup is attempted when this page opens.
+              Chrome may require a user gesture. Voice recognition
+              may stop when the tab is backgrounded or the device
+              is locked.
             </p>
           </div>
 
-          {/* Staff Login */}
+          {/* Staff login */}
           <Link
             to="/login"
             className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl border border-slate-700 bg-slate-900/70 px-6 py-4 font-semibold text-slate-200 transition hover:border-cyan-400/50 hover:bg-slate-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-400/40"
@@ -445,9 +654,11 @@ function Home() {
         <div className="mx-auto mt-12 grid max-w-xl grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-4">
             <Siren size={21} className="mx-auto text-red-400" />
+
             <p className="mt-2 text-sm font-semibold text-slate-200">
               One-Tap SOS
             </p>
+
             <p className="mt-1 text-xs leading-5 text-slate-500">
               Quick emergency reporting
             </p>
@@ -455,9 +666,11 @@ function Home() {
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-4">
             <HeartPulse size={21} className="mx-auto text-cyan-400" />
+
             <p className="mt-2 text-sm font-semibold text-slate-200">
               Live Tracking
             </p>
+
             <p className="mt-1 text-xs leading-5 text-slate-500">
               Follow emergency response
             </p>
@@ -465,9 +678,11 @@ function Home() {
 
           <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-4">
             <ShieldCheck size={21} className="mx-auto text-emerald-400" />
+
             <p className="mt-2 text-sm font-semibold text-slate-200">
               Coordinated Care
             </p>
+
             <p className="mt-1 text-xs leading-5 text-slate-500">
               Connected response teams
             </p>
