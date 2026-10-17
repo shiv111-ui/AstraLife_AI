@@ -1,1400 +1,422 @@
-import { signOut } from "firebase/auth";
+import { useEffect, useMemo, useState } from "react";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
-import { auth } from "../assets/firebase";
-
-
-
-import { useMemo, useState } from "react";
+import {
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  query,
+  where,
+  setDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { MapContainer, Marker, Popup, Polyline, TileLayer, useMap } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import {
   Activity,
   Ambulance,
-  ArrowDownRight,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUpRight,
-  BadgeCheck,
-  Bell,
-  CalendarClock,
-  Check,
-  CheckCircle2,
-  ChevronDown,
+  AlertCircle,
   Clock3,
-  ExternalLink,
-  FileText,
-  Gauge,
-  HeartPulse,
-  History,
   Hospital,
-  Info,
-  LocateFixed,
   LogOut,
   MapPin,
-  Menu,
   Navigation,
   Phone,
   Radio,
-  Route,
+  RefreshCw,
   ShieldCheck,
-  Siren,
-  Smartphone,
   UserRound,
-  Users,
   Wifi,
   WifiOff,
-  X,
-  Zap,
 } from "lucide-react";
-
-const INITIAL_MISSIONS = [
-  {
-    id: "AST-2048",
-    patient: "Emergency Patient",
-    emergency: "Cardiac Emergency",
-    severity: "Critical",
-    status: "Assigned",
-    distance: "2.4 km",
-    eta: "6 min",
-    reportedAt: "2 min ago",
-    phone: "Not provided",
-    location: "Near City Central Road",
-    destination: "City General Hospital",
-    coordinates: "18.5204, 73.8567",
-    victims: "1",
-    description:
-      "Patient requires urgent medical assistance. Please verify details at the incident location.",
-  },
-  {
-    id: "AST-2042",
-    patient: "Emergency Patient",
-    emergency: "Road Accident",
-    severity: "High",
-    status: "Completed",
-    distance: "4.1 km",
-    eta: "9 min",
-    reportedAt: "Today, earlier",
-    phone: "Not provided",
-    location: "University Road Junction",
-    destination: "Central Medical Centre",
-    coordinates: "18.5314, 73.8446",
-    victims: "2",
-    description: "Road accident reported. Victim count requires verification.",
-  },
-];
-
-const WORKFLOW = [
-  "Assigned",
-  "Accepted",
-  "En Route",
-  "At Scene",
-  "Patient Onboard",
-  "At Hospital",
-  "Completed",
-];
-
-const SEVERITY_STYLES = {
-  Critical: "border-red-500/30 bg-red-500/10 text-red-300",
-  High: "border-orange-500/30 bg-orange-500/10 text-orange-300",
-  Moderate: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-};
+import { auth, db } from "../assets/firebase";
+import { getRoute } from "../api/routing.js";
 
 const STATUS_STYLES = {
-  Assigned: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-  Accepted: "border-sky-500/30 bg-sky-500/10 text-sky-300",
-  "En Route": "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
-  "At Scene": "border-violet-500/30 bg-violet-500/10 text-violet-300",
-  "Patient Onboard":
-    "border-indigo-500/30 bg-indigo-500/10 text-indigo-300",
-  "At Hospital": "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-  Completed: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-  Rejected: "border-slate-600 bg-slate-800 text-slate-400",
+  Pending: "bg-slate-800 text-slate-300",
+  Assigned: "bg-amber-100 text-amber-800",
+  Accepted: "bg-sky-100 text-sky-800",
+  "En Route": "bg-cyan-100 text-cyan-800",
+  "At Scene": "bg-violet-100 text-violet-800",
+  Transporting: "bg-indigo-100 text-indigo-800",
+  "Patient Onboard": "bg-indigo-100 text-indigo-800",
+  "At Hospital": "bg-emerald-100 text-emerald-800",
+  Completed: "bg-emerald-100 text-emerald-800",
+  Rejected: "bg-rose-100 text-rose-800",
 };
 
-const panelClass =
-  "rounded-2xl border border-slate-800 bg-slate-900/80 shadow-lg shadow-black/10";
+const panel = "rounded-2xl border border-slate-800 bg-slate-900/80 shadow-sm";
 
-const primaryButton =
-  "inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500 focus:outline-none focus:ring-2 focus:ring-red-400 disabled:cursor-not-allowed disabled:opacity-40";
-
-const secondaryButton =
-  "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-slate-600 hover:bg-slate-700";
-
-function SectionTitle({ icon: Icon, title, subtitle, action }) {
-  return (
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-start gap-3">
-        <div className="rounded-xl border border-slate-700 bg-slate-800 p-2.5 text-cyan-300">
-          <Icon size={19} />
-        </div>
-
-        <div>
-          <h2 className="text-base font-semibold text-white">{title}</h2>
-          {subtitle && (
-            <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
-          )}
-        </div>
-      </div>
-
-      {action}
-    </div>
-  );
+function createMarkerIcon(color) {
+  return L.divIcon({
+    className: "astralife-map-marker",
+    html: `<div style="width:18px;height:18px;border:3px solid white;border-radius:50%;background:${color};box-shadow:0 2px 10px #0f172a55"></div>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
 }
 
-function StatCard({ icon: Icon, label, value, description, accent }) {
-  const accents = {
-    red: "bg-red-500/10 text-red-300 border-red-500/20",
-    cyan: "bg-cyan-500/10 text-cyan-300 border-cyan-500/20",
-    emerald:
-      "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
-    amber: "bg-amber-500/10 text-amber-300 border-amber-500/20",
-  };
+const ambulanceIcon = createMarkerIcon("#0891b2");
+const patientIcon = createMarkerIcon("#dc2626");
+const hospitalIcon = createMarkerIcon("#16a34a");
 
-  return (
-    <div className={`${panelClass} p-5 transition hover:border-slate-700`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm text-slate-400">{label}</p>
-          <p className="mt-3 text-3xl font-bold tracking-tight text-white">
-            {value}
-          </p>
-        </div>
-
-        <div
-          className={`rounded-xl border p-3 ${
-            accents[accent] || accents.cyan
-          }`}
-        >
-          <Icon size={21} />
-        </div>
-      </div>
-
-      <p className="mt-3 text-xs text-slate-500">{description}</p>
-    </div>
-  );
+function MapAutoFit({ points }) {
+  const map = useMap();
+  useEffect(() => {
+    if (points.length > 1) {
+      map.fitBounds(points, { padding: [36, 36], maxZoom: 15 });
+    } else if (points.length === 1) {
+      map.setView(points[0], 14);
+    }
+  }, [map, points]);
+  return null;
 }
 
-function StatusBadge({ status }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
-        STATUS_STYLES[status] || STATUS_STYLES.Assigned
-      }`}
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {status}
-    </span>
-  );
+function getCoordinates(value) {
+  if (!value) return null;
+  const latitude = Number(value.latitude ?? value.lat);
+  const longitude = Number(value.longitude ?? value.lng ?? value.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return [latitude, longitude];
 }
 
-function SeverityBadge({ severity }) {
-  return (
-    <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
-        SEVERITY_STYLES[severity] || SEVERITY_STYLES.Moderate
-      }`}
-    >
-      {severity}
-    </span>
-  );
+function formatTimestamp(value) {
+  const date = value?.toDate?.() ?? (value instanceof Date ? value : null);
+  if (!date) return "Waiting for first update";
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }
 
-function DetailItem({ icon: Icon, label, value }) {
+function Field({ icon: Icon, label, value }) {
   return (
-    <div className="flex items-start gap-3">
-      <div className="mt-0.5 text-slate-500">
-        <Icon size={17} />
-      </div>
-
+    <div className="flex min-w-0 gap-3">
+      <span className="mt-0.5 rounded-lg bg-slate-800 p-2 text-slate-400"><Icon size={17} /></span>
       <div className="min-w-0">
-        <p className="text-xs text-slate-500">{label}</p>
-        <p className="mt-1 break-words text-sm font-medium text-slate-200">
-          {value}
-        </p>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
+        <p className="mt-1 break-words text-sm font-semibold text-slate-100">{value || "Not provided"}</p>
       </div>
     </div>
   );
 }
 
 export default function AmbulanceDashboard() {
-  const [ambulanceOnline, setAmbulanceOnline] = useState(true);
-  const [missions, setMissions] = useState(INITIAL_MISSIONS);
-  const [selectedMissionId, setSelectedMissionId] = useState("AST-2048");
-  const [activeTab, setActiveTab] = useState("active");
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showVehicleDetails, setShowVehicleDetails] = useState(false);
-  const [notification, setNotification] = useState(null);
-
-  const selectedMission = missions.find(
-    (mission) => mission.id === selectedMissionId
-  );
-
-  const activeMissions = useMemo(
-    () =>
-      missions.filter(
-        (mission) =>
-          !["Completed", "Rejected"].includes(mission.status)
-      ),
-    [missions]
-  );
-
-  const completedMissions = useMemo(
-    () => missions.filter((mission) => mission.status === "Completed"),
-    [missions]
-  );
-
-  const displayedMissions =
-    activeTab === "active" ? activeMissions : completedMissions;
-
-  const showMessage = (message, type = "success") => {
-    setNotification({ message, type });
-
-    window.setTimeout(() => {
-      setNotification(null);
-    }, 3500);
-  };
-
   const navigate = useNavigate();
+  const [staff, setStaff] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
+  const [ambulance, setAmbulance] = useState(null);
+  const [hospitals, setHospitals] = useState([]);
+  const [missions, setMissions] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [gps, setGps] = useState(null);
+  const [gpsError, setGpsError] = useState("");
+  const [gpsSharing, setGpsSharing] = useState(false);
+  const [gpsPublishStatus, setGpsPublishStatus] = useState("");
+  const [missionRoadRoute, setMissionRoadRoute] = useState(null);
+  const [missionRouteStatus, setMissionRouteStatus] = useState("");
+  const [dataError, setDataError] = useState("");
+  const [loadingMissions, setLoadingMissions] = useState(true);
+
+  // Declare the selected mission before effects that reference it.
+  const selectedMission = useMemo(() => missions.find((item) => item.id === selectedId) || null, [missions, selectedId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (cancelled) return;
+      setAuthError("");
+      if (!user) {
+        setStaff(null);
+        setAuthError("Please sign in with an authorized ambulance account.");
+        setAuthLoading(false);
+        return;
+      }
+      setAuthLoading(true);
+      try {
+        const snap = await getDoc(doc(db, "Staff", user.uid));
+        if (!snap.exists()) throw new Error("Your Staff profile was not found.");
+        const data = snap.data();
+        if (data.role !== "ambulance" || data.active !== true) {
+          throw new Error("This account is not an active ambulance account.");
+        }
+        if (!data.ambulanceId) throw new Error("No ambulance ID is linked to this account.");
+        if (!cancelled) setStaff({ uid: user.uid, ...data, ambulanceId: String(data.ambulanceId).trim() });
+      } catch (error) {
+        console.error("Ambulance profile load failed:", error);
+        if (!cancelled) setAuthError(error.message || "Could not load ambulance profile.");
+      } finally {
+        if (!cancelled) setAuthLoading(false);
+      }
+    });
+    return () => { cancelled = true; unsubscribe(); };
+  }, []);
+
+  useEffect(() => {
+    if (!staff?.ambulanceId) return undefined;
+    setLoadingMissions(true);
+    setDataError("");
+    const stopVehicle = onSnapshot(
+      doc(db, "Ambulances", staff.ambulanceId),
+      (snap) => setAmbulance(snap.exists() ? snap.data() : null),
+      (error) => console.error("Ambulance record read failed:", error)
+    );
+    const assigned = query(
+      collection(db, "Emergency_Cases"),
+      where("ambulanceId", "==", staff.ambulanceId)
+    );
+    const stopMissions = onSnapshot(assigned, (snapshot) => {
+      const records = snapshot.docs.map((item) => {
+        const data = item.data();
+        const patientLocation = getCoordinates(data.location ?? data.patientLocation);
+        const created = data.createdAt?.toDate?.();
+        return {
+          id: item.id,
+          patient: data.patientName || data.PatientName || "Emergency patient",
+          phone: data.phone || data.patientPhone || data.contactNumber || "",
+          emergencyType: data.EmergencyType || data.emergencyType || data.type || "Medical emergency",
+          severity: data.Priority || data.severity || data.Severity || "Not specified",
+          status: data.Status || "Assigned",
+          address: data.address || data.locationAddress || data.incidentAddress || data.location?.address || "Location shared by GPS",
+          patientLocation,
+          hospitalId: data.hospitalId || null,
+          description: data.description || data.Description || "No additional details provided.",
+          createdAt: created,
+          createdLabel: formatTimestamp(data.createdAt),
+        };
+      });
+      records.sort((a, b) => {
+        const activeA = !["Completed", "Rejected"].includes(a.status);
+        const activeB = !["Completed", "Rejected"].includes(b.status);
+        return Number(activeB) - Number(activeA) || (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0);
+      });
+      setMissions(records);
+      setSelectedId((current) => records.some((item) => item.id === current) ? current : (records.find((item) => !["Completed", "Rejected"].includes(item.status))?.id || records[0]?.id || ""));
+      setLoadingMissions(false);
+      setDataError("");
+    }, (error) => {
+      console.error("Assigned emergency subscription failed:", error);
+      setDataError(error.code === "permission-denied"
+        ? "Firestore denied access to assigned emergencies. Check the Emergency_Cases read rule for active ambulance staff."
+        : "Could not load assigned emergencies. Please refresh and try again.");
+      setLoadingMissions(false);
+    });
+    return () => { stopVehicle(); stopMissions(); };
+  }, [staff?.ambulanceId]);
+
+  // Read hospital locations for map context. Demo-generated locations are labeled in each popup.
+  useEffect(() => {
+    const stopHospitals = onSnapshot(collection(db, "Hospitals"), (snapshot) => {
+      const items = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+      setHospitals(items);
+    }, (error) => {
+      console.error("Hospital locations subscription failed:", error);
+    });
+    return () => stopHospitals();
+  }, []);
+
+  // Friend 2 publishes GPS records to Ambulance_Locations. This dashboard only reads them.
+  useEffect(() => {
+    if (!staff?.ambulanceId) return undefined;
+    setGps(null);
+    setGpsError("");
+    const gpsQuery = query(
+      collection(db, "Ambulance_Locations"),
+      where("ambulanceId", "==", staff.ambulanceId)
+    );
+    const stopGps = onSnapshot(gpsQuery, (snapshot) => {
+      if (snapshot.empty) {
+        setGps(null);
+        return;
+      }
+      const latest = snapshot.docs
+        .map((item) => ({ ...item.data(), _id: item.id }))
+        .sort((a, b) => {
+          const aTime = a.updatedAt?.toMillis?.() ?? 0;
+          const bTime = b.updatedAt?.toMillis?.() ?? 0;
+          return bTime - aTime;
+        })[0];
+      const coords = getCoordinates(latest.location ?? latest.coordinates ?? latest);
+      setGps(coords ? { coords, updatedAt: latest.updatedAt || null, raw: latest } : null);
+    }, (error) => {
+      console.error("Ambulance GPS subscription failed:", error);
+      setGpsError(error.code === "permission-denied"
+        ? "Location sharing is not readable under the current Firestore rules."
+        : "Live location is not available yet.");
+    });
+    return () => stopGps();
+  }, [staff?.ambulanceId]);
+
+  // Publish this device's physical GPS to the same collection consumed by all dashboards.
+  useEffect(() => {
+    if (!gpsSharing || !staff?.ambulanceId) return undefined;
+    if (!navigator.geolocation) {
+      setGpsPublishStatus("This browser does not support GPS.");
+      setGpsSharing(false);
+      return undefined;
+    }
+
+    let active = true;
+    const watchId = navigator.geolocation.watchPosition(async (position) => {
+      if (!active) return;
+      const { latitude, longitude, accuracy, speed, heading } = position.coords;
+      const payload = {
+        ambulanceId: String(staff.ambulanceId),
+        latitude,
+        longitude,
+        location: { latitude, longitude, accuracy: Math.round(accuracy || 0) },
+        coordinates: { latitude, longitude },
+        accuracy: Math.round(accuracy || 0),
+        speed: Number.isFinite(speed) ? Math.round(speed * 3.6) : 0,
+        heading: Number.isFinite(heading) ? heading : 0,
+        status: selectedMission?.status || "Available",
+        updatedAt: serverTimestamp(),
+        timestamp: serverTimestamp(),
+        source: "ambulance-dashboard-device-gps",
+      };
+      try {
+        // Stable document ID plus ambulanceId field supports both direct and query listeners.
+        await setDoc(doc(db, "Ambulance_Locations", String(staff.ambulanceId)), payload, { merge: true });
+        if (active) setGpsPublishStatus(`GPS sharing active · ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+      } catch (error) {
+        console.error("Ambulance GPS publish failed:", error);
+        if (active) setGpsPublishStatus(error.code === "permission-denied"
+          ? "GPS captured, but Firestore rules denied publishing."
+          : "GPS captured, but could not sync to Firestore.");
+      }
+    }, (error) => {
+      if (active) setGpsPublishStatus(`GPS error: ${error.message}`);
+    }, { enableHighAccuracy: true, maximumAge: 1500, timeout: 15000 });
+
+    setGpsPublishStatus("Requesting device GPS permission…");
+    return () => {
+      active = false;
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [gpsSharing, staff?.ambulanceId, selectedMission?.status]);
+
+
+  // Calculate a real road-following route from the ambulance's latest GPS to the selected victim.
+  useEffect(() => {
+    let cancelled = false;
+    const origin = gps?.coords;
+    const destination = selectedMission?.patientLocation;
+    if (!origin || !destination) {
+      setMissionRoadRoute(null);
+      setMissionRouteStatus("Waiting for ambulance and victim GPS to calculate the road route.");
+      return undefined;
+    }
+    setMissionRouteStatus("Calculating road route to victim…");
+    getRoute(origin[0], origin[1], destination[0], destination[1])
+      .then((result) => {
+        if (!cancelled) {
+          setMissionRoadRoute(result);
+          setMissionRouteStatus(`Road route: ${result.distanceKm} km · approximately ${result.durationMinutes} min`);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setMissionRoadRoute(null);
+          setMissionRouteStatus(error.message || "Road route is temporarily unavailable.");
+        }
+      });
+    return () => { cancelled = true; };
+  }, [gps?.coords?.[0], gps?.coords?.[1], selectedMission?.patientLocation?.[0], selectedMission?.patientLocation?.[1]]);
+  const activeMissions = missions.filter((item) => !["Completed", "Rejected"].includes(item.status));
+  const routeUrl = selectedMission?.patientLocation
+    ? `https://www.google.com/maps/dir/?api=1${gps?.coords ? `&origin=${gps.coords[0]},${gps.coords[1]}` : ""}&destination=${selectedMission.patientLocation[0]},${selectedMission.patientLocation[1]}&travelmode=driving`
+    : null;
+  const hospitalMapPoints = hospitals
+    .map((hospital) => getCoordinates(hospital.location ?? hospital.coordinates ?? hospital))
+    .filter(Boolean);
+  const mapPoints = [gps?.coords, selectedMission?.patientLocation, ...hospitalMapPoints].filter(Boolean);
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      navigate("/login", { replace: true });
-    } catch (error) {
-      console.error("Logout failed:", error);
-      showMessage("Unable to log out. Please try again.", "error");
-    }
+    try { await signOut(auth); navigate("/login", { replace: true }); }
+    catch (error) { console.error("Logout failed:", error); }
   };
 
-  const updateMissionStatus = (missionId, newStatus) => {
-    setMissions((currentMissions) =>
-      currentMissions.map((mission) =>
-        mission.id === missionId
-          ? { ...mission, status: newStatus }
-          : mission
-      )
-    );
-
-    showMessage(`Mission status updated to "${newStatus}".`);
-  };
-
-  const rejectMission = (mission) => {
-    const confirmed = window.confirm(
-      `Reject demonstration assignment ${mission.id}? This action only updates the local demo.`
-    );
-
-    if (!confirmed) return;
-
-    updateMissionStatus(mission.id, "Rejected");
-
-    const nextMission = missions.find(
-      (item) =>
-        item.id !== mission.id &&
-        !["Completed", "Rejected"].includes(item.status)
-    );
-
-    if (nextMission) {
-      setSelectedMissionId(nextMission.id);
-    }
-  };
-
-  const currentWorkflowIndex = selectedMission
-    ? WORKFLOW.indexOf(selectedMission.status)
-    : -1;
-
-  const nextWorkflowStatus =
-    selectedMission &&
-    currentWorkflowIndex >= 0 &&
-    currentWorkflowIndex < WORKFLOW.length - 1
-      ? WORKFLOW[currentWorkflowIndex + 1]
-      : null;
-
-  const advanceMission = () => {
-    if (!selectedMission || !nextWorkflowStatus) return;
-
-    updateMissionStatus(selectedMission.id, nextWorkflowStatus);
-  };
-
-  const openNavigation = (mission) => {
-    const [latitude, longitude] = mission.coordinates
-      .split(",")
-      .map((value) => value.trim());
-
-    const destination =
-      ["At Scene", "Accepted", "Assigned"].includes(mission.status)
-        ? `${latitude},${longitude}`
-        : mission.destination;
-
-    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
-      destination
-    )}`;
-
-    window.open(mapsUrl, "_blank", "noopener,noreferrer");
-  };
-
-  const formatDate = () =>
-    new Intl.DateTimeFormat("en-IN", {
-      weekday: "short",
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    }).format(new Date());
-
-  const renderMissionAction = (mission) => {
-    if (mission.status === "Assigned") {
-      return (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => updateMissionStatus(mission.id, "Accepted")}
-            className={primaryButton}
-          >
-            <Check size={16} />
-            Accept
-          </button>
-
-          <button
-            type="button"
-            onClick={() => rejectMission(mission)}
-            className={secondaryButton}
-          >
-            <X size={16} />
-            Reject
-          </button>
-        </div>
-      );
-    }
-
-    if (mission.status === "Completed") {
-      return (
-        <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-300">
-          <CheckCircle2 size={17} />
-          Mission completed
-        </span>
-      );
-    }
-
-    if (mission.status === "Rejected") {
-      return (
-        <span className="text-sm text-slate-500">
-          Assignment rejected
-        </span>
-      );
-    }
-
-    return (
-      <button
-        type="button"
-        onClick={() => setSelectedMissionId(mission.id)}
-        className={secondaryButton}
-      >
-        View mission
-        <ArrowRight size={16} />
-      </button>
-    );
-  };
+  if (authLoading) return <div className="grid min-h-screen place-items-center bg-slate-950 text-slate-400"><div className="flex items-center gap-3"><RefreshCw className="animate-spin" /> Loading ambulance dashboard…</div></div>;
+  if (authError) return <main className="grid min-h-screen place-items-center bg-slate-950 p-6"><section className={`${panel} max-w-lg p-8 text-center`}><AlertCircle className="mx-auto text-red-600" size={38} /><h1 className="mt-4 text-xl font-bold text-slate-100">Ambulance access unavailable</h1><p className="mt-2 text-sm text-slate-400">{authError}</p><button onClick={() => navigate("/login")} className="mt-6 rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white">Back to login</button></section></main>;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Header */}
+    <main className="min-h-screen bg-slate-950 text-slate-100">
       <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/95 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
-          <a href="/" className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-600 shadow-lg shadow-red-950/30">
-              <Ambulance size={24} className="text-white" />
-            </div>
-
-            <div className="min-w-0">
-              <h1 className="truncate text-lg font-bold tracking-tight text-white">
-                ASTRALIFE <span className="text-red-400">AI</span>
-              </h1>
-              <p className="text-xs text-slate-400">
-                Ambulance Operations
-              </p>
-            </div>
-          </a>
-
-          <div className="hidden items-center gap-3 md:flex">
-            <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  ambulanceOnline ? "bg-emerald-400" : "bg-slate-500"
-                }`}
-              />
-
-              <span className="text-sm text-slate-300">
-                {ambulanceOnline ? "Available" : "Offline"}
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setAmbulanceOnline((value) => !value)}
-              className={ambulanceOnline ? secondaryButton : primaryButton}
-            >
-              {ambulanceOnline ? (
-                <>
-                  <WifiOff size={16} />
-                  Go Offline
-                </>
-              ) : (
-                <>
-                  <Wifi size={16} />
-                  Go Online
-                </>
-              )}
-            </button>
-
-            <button
-              type="button"
-              title="Notifications"
-              onClick={() =>
-                showMessage(
-                  "Notifications are demonstration-only in this prototype.",
-                  "info"
-                )
-              }
-              className="relative rounded-xl border border-slate-800 bg-slate-900 p-3 text-slate-300 transition hover:bg-slate-800"
-            >
-              <Bell size={19} />
-              {activeMissions.length > 0 && (
-                <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleLogout}
-              className={secondaryButton}
-            >
-              <LogOut size={16} />
-              Logout
-            </button>    
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-cyan-700 p-3 text-white"><Ambulance size={24} /></div>
+            <div><p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-700">Astralife AI</p><h1 className="text-xl font-bold sm:text-2xl">Ambulance Dashboard</h1><p className="text-sm text-slate-400">Emergency mission and live location</p></div>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setMobileMenuOpen((value) => !value)}
-            className="rounded-xl border border-slate-800 bg-slate-900 p-2.5 text-slate-300 md:hidden"
-            aria-label="Toggle navigation menu"
-          >
-            {mobileMenuOpen ? <X size={21} /> : <Menu size={21} />}
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="hidden rounded-xl bg-emerald-50 px-3 py-2 text-right sm:block"><p className="text-xs text-emerald-700">Signed in as</p><p className="text-sm font-bold text-emerald-900">{staff.ambulanceId}</p></div>
+            <button onClick={handleLogout} className="inline-flex items-center gap-2 rounded-xl border border-slate-800 px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800"><LogOut size={16} /><span className="hidden sm:inline">Logout</span></button>
+          </div>
         </div>
-
-        {mobileMenuOpen && (
-          <div className="border-t border-slate-800 bg-slate-900 px-4 py-4 md:hidden">
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-400">Vehicle availability</span>
-                <span
-                  className={
-                    ambulanceOnline
-                      ? "text-emerald-300"
-                      : "text-slate-400"
-                  }
-                >
-                  {ambulanceOnline ? "Available" : "Offline"}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setAmbulanceOnline((value) => !value)}
-                className={secondaryButton}
-              >
-                {ambulanceOnline ? (
-                  <WifiOff size={16} />
-                ) : (
-                  <Wifi size={16} />
-                )}
-                {ambulanceOnline ? "Go Offline" : "Go Online"}
-              </button>
-            </div>
-          </div>
-        )}
       </header>
 
-      <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-        {/* Prototype notice */}
-        <div className="mb-7 flex items-start gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
-          <Info size={20} className="mt-0.5 shrink-0 text-amber-300" />
+      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        {(dataError || gpsError) && <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><AlertCircle className="mt-0.5 shrink-0" size={18} /><div>{dataError || gpsError}</div></div>}
 
-          <div>
-            <p className="text-sm font-semibold text-amber-200">
-              Demonstration dashboard
-            </p>
-            <p className="mt-1 text-sm leading-6 text-slate-400">
-              Assignments, availability and mission updates are simulated
-              in your browser. This prototype does not receive live
-              emergency requests, contact patients, or dispatch an ambulance.
-              Never use it as a substitute for an actual emergency service.
-            </p>
-          </div>
-        </div>
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className={`${panel} p-5`}><div className="flex items-center justify-between"><p className="text-sm text-slate-400">Active assignments</p><Activity className="text-cyan-700" /></div><p className="mt-3 text-3xl font-bold">{activeMissions.length}</p><p className="mt-1 text-xs text-slate-400">Assigned to this ambulance</p></div>
+          <div className={`${panel} p-5`}><div className="flex items-center justify-between"><p className="text-sm text-slate-400">Ambulance ID</p><Ambulance className="text-cyan-700" /></div><p className="mt-3 text-2xl font-bold">{staff.ambulanceId}</p><p className="mt-1 text-xs text-slate-400">Verified staff assignment</p></div>
+          <div className={`${panel} p-5`}><div className="flex items-center justify-between"><p className="text-sm text-slate-400">GPS sharing</p>{gpsSharing ? <Wifi className="text-emerald-600" /> : <WifiOff className="text-amber-600" />}</div><p className="mt-3 text-xl font-bold">{gpsSharing ? "Sharing device GPS" : gps ? "Location received" : "Waiting for GPS"}</p><p className="mt-1 text-xs text-slate-400">{gps ? `Latest received ${formatTimestamp(gps.updatedAt)}` : "Enable GPS to publish this ambulance's location"}</p><button type="button" onClick={() => setGpsSharing((value) => !value)} className={`mt-3 w-full rounded-lg px-3 py-2 text-sm font-bold text-white ${gpsSharing ? "bg-rose-700 hover:bg-rose-800" : "bg-cyan-700 hover:bg-cyan-800"}`}>{gpsSharing ? "Stop GPS sharing" : "Start GPS sharing"}</button>{gpsPublishStatus && <p className="mt-2 text-xs text-slate-400">{gpsPublishStatus}</p>}</div>
+          <div className={`${panel} p-5`}><div className="flex items-center justify-between"><p className="text-sm text-slate-400">Current mission</p><ShieldCheck className="text-cyan-700" /></div><p className="mt-3 text-xl font-bold">{selectedMission?.status || "No assignment"}</p><p className="mt-1 text-xs text-slate-400">Automatically follows assignment data</p></div>
+        </section>
 
-        {/* Page heading */}
-        <section className="mb-8 flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
-          <div>
-            <div className="mb-3 flex items-center gap-2 text-sm text-cyan-300">
-              <Activity size={17} />
-              <span>Emergency Response Network</span>
-            </div>
+        <section className="grid items-start gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+          <aside className={`${panel} overflow-hidden`}>
+            <div className="border-b border-slate-800 p-5"><h2 className="text-lg font-bold">Assigned victims</h2><p className="mt-1 text-sm text-slate-400">Assignments appear automatically when the control room assigns this ambulance.</p></div>
+            {loadingMissions ? <div className="p-8 text-center text-sm text-slate-400"><RefreshCw className="mx-auto mb-3 animate-spin" />Loading assignments…</div> : missions.length === 0 ? <div className="p-8 text-center"><Ambulance className="mx-auto text-slate-300" size={34} /><p className="mt-3 font-semibold">No assigned emergencies</p><p className="mt-1 text-sm text-slate-400">This panel will update automatically when a case is assigned.</p></div> : <div className="divide-y divide-slate-800">{missions.map((mission) => <button key={mission.id} onClick={() => setSelectedId(mission.id)} className={`block w-full p-5 text-left transition hover:bg-slate-950 ${selectedId === mission.id ? "border-l-4 border-cyan-700 bg-cyan-50/70" : "border-l-4 border-transparent"}`}><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-100">{mission.patient}</p><span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-bold ${STATUS_STYLES[mission.status] || STATUS_STYLES.Assigned}`}>{mission.status}</span></div><p className="mt-1 text-sm text-slate-400">{mission.emergencyType}</p><p className="mt-3 flex items-center gap-2 text-xs text-slate-400"><MapPin size={14} />{mission.patientLocation ? "Location available" : "Location unavailable"}</p><p className="mt-1 flex items-center gap-2 text-xs text-slate-400"><Clock3 size={14} />{mission.createdLabel}</p></button>)}</div>}
+          </aside>
 
-            <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-              Ambulance Dashboard
-            </h2>
+          <div className="space-y-6">
+            {selectedMission ? <>
+              <section className={`${panel} p-5 sm:p-6`}>
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-700">Mission details</p><h2 className="mt-1 text-2xl font-bold">{selectedMission.patient}</h2><p className="mt-1 text-sm text-slate-400">Emergency ID: {selectedMission.id}</p></div><span className={`rounded-full px-3 py-1.5 text-sm font-bold ${STATUS_STYLES[selectedMission.status] || STATUS_STYLES.Assigned}`}>{selectedMission.status}</span></div>
+                <div className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                  <Field icon={Activity} label="Emergency type" value={selectedMission.emergencyType} />
+                  <Field icon={AlertCircle} label="Severity / priority" value={selectedMission.severity} />
+                  <Field icon={Clock3} label="Reported" value={selectedMission.createdLabel} />
+                  <Field icon={Phone} label="Patient contact" value={selectedMission.phone || "Not provided"} />
+                  <Field icon={MapPin} label="Incident location" value={selectedMission.address} />
+                  <Field icon={Hospital} label="Assigned hospital" value={selectedMission.hospitalId || "Awaiting assignment"} />
+                </div>
+                {selectedMission.description && <div className="mt-5 rounded-xl bg-slate-950 p-4"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Additional details</p><p className="mt-2 text-sm leading-6 text-slate-300">{selectedMission.description}</p></div>}
+              </section>
 
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400 sm:text-base">
-              Manage assignments, track mission progress and coordinate
-              patient transportation from one workspace.
-            </p>
+              <section className={`${panel} overflow-hidden`}>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-5"><div><h2 className="flex items-center gap-2 text-lg font-bold"><MapPin className="text-red-600" /> Victim location & route</h2><p className="mt-1 text-sm text-slate-400">Map uses the incident coordinates stored with the emergency.</p></div>{routeUrl && <a href={routeUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-cyan-800"><Navigation size={17} />Open best route</a>}</div>
+                {mapPoints.length ? <div className="h-[340px] w-full sm:h-[430px]"><MapContainer center={mapPoints[0]} zoom={13} scrollWheelZoom className="h-full w-full"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />{selectedMission.patientLocation && <Marker position={selectedMission.patientLocation} icon={patientIcon}><Popup>Emergency location</Popup></Marker>}{gps?.coords && <Marker position={gps.coords} icon={ambulanceIcon}><Popup>Ambulance {staff.ambulanceId}</Popup></Marker>}{missionRoadRoute?.coordinates?.length > 1 && <Polyline positions={missionRoadRoute.coordinates} pathOptions={{ color: "#16a34a", weight: 5, opacity: 0.9 }} />} {hospitals.map((hospital) => { const coords = getCoordinates(hospital.location ?? hospital.coordinates ?? hospital); if (!coords) return null; const isDemo = hospital.isDemoLocation === true || hospital.locationSource === "DEMO_GENERATED" || hospital.location?.isDemo === true; return <Marker key={hospital.id} position={coords} icon={hospitalIcon}><Popup><div className="min-w-40"><strong>{hospital.name || hospital.hospitalName || hospital.id}</strong><br />{hospital.address || hospital.location?.address || "Address not provided"}{isDemo && <><br /><span style={{ color: "#b45309", fontWeight: 700 }}>Demo location — not verified</span></>}</div></Popup></Marker>; })}<MapAutoFit points={mapPoints} /></MapContainer></div> : <div className="grid min-h-[260px] place-items-center bg-slate-950 p-8 text-center"><div><MapPin className="mx-auto text-slate-300" size={38} /><p className="mt-3 font-semibold text-slate-800">Coordinates are not available</p><p className="mt-1 max-w-md text-sm text-slate-400">The emergency record needs latitude and longitude in its `location` or `patientLocation` field before the map can mark the victim.</p></div></div>}
+                <div className="border-t border-slate-800 px-5 pt-4 text-sm text-emerald-300">{missionRouteStatus}</div>
+                <div className="grid gap-4 border-t border-slate-800 p-5 sm:grid-cols-2"><div className="flex items-start gap-3"><span className="mt-1 h-3 w-3 rounded-full bg-red-600" /><div><p className="text-sm font-bold">Victim / incident</p><p className="mt-1 text-xs text-slate-400">{selectedMission.patientLocation ? `${selectedMission.patientLocation[0].toFixed(5)}, ${selectedMission.patientLocation[1].toFixed(5)}` : "No coordinates"}</p></div></div><div className="flex items-start gap-3"><span className="mt-1 h-3 w-3 rounded-full bg-cyan-600" /><div><p className="text-sm font-bold">Ambulance live location</p><p className="mt-1 text-xs text-slate-400">{gps?.coords ? `${gps.coords[0].toFixed(5)}, ${gps.coords[1].toFixed(5)} · ${formatTimestamp(gps.updatedAt)}` : "Waiting for Friend 2's GPS publisher"}</p></div></div></div>
+              </section>
+            </> : <section className={`${panel} grid min-h-72 place-items-center p-8 text-center`}><div><Ambulance className="mx-auto text-slate-300" size={42} /><h2 className="mt-3 text-xl font-bold">No mission selected</h2><p className="mt-2 max-w-md text-sm text-slate-400">When Friend 1's assignment logic assigns an emergency to this ambulance ID, the victim details will appear here automatically.</p></div></section>}
 
-            <p className="mt-3 flex items-center gap-2 text-sm text-slate-500">
-              <CalendarClock size={15} />
-              {formatDate()}
-            </p>
-          </div>
-
-          <div
-            className={`flex items-center gap-3 rounded-2xl border p-4 ${
-              ambulanceOnline
-                ? "border-emerald-500/20 bg-emerald-500/5"
-                : "border-slate-700 bg-slate-900"
-            }`}
-          >
-            <div
-              className={`flex h-11 w-11 items-center justify-center rounded-xl ${
-                ambulanceOnline
-                  ? "bg-emerald-500/10 text-emerald-300"
-                  : "bg-slate-800 text-slate-400"
-              }`}
-            >
-              {ambulanceOnline ? (
-                <Radio size={23} />
-              ) : (
-                <WifiOff size={23} />
-              )}
-            </div>
-
-            <div>
-              <p className="text-sm font-semibold text-white">
-                {ambulanceOnline
-                  ? "Ambulance Available"
-                  : "Ambulance Offline"}
-              </p>
-              <p className="mt-1 text-xs text-slate-400">
-                {ambulanceOnline
-                  ? "Marked available in this demo"
-                  : "Not available for new demo assignments"}
-              </p>
-            </div>
+            <section className={`${panel} p-5 sm:p-6`}>
+              <div className="flex items-center gap-3"><div className="rounded-xl bg-cyan-50 p-3 text-cyan-800"><Ambulance size={23} /></div><div><h2 className="text-lg font-bold">Ambulance details</h2><p className="text-sm text-slate-400">Vehicle profile from Firestore</p></div></div>
+              <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                <Field icon={Ambulance} label="Ambulance ID" value={staff.ambulanceId} />
+                <Field icon={ShieldCheck} label="Staff role" value={staff.role} />
+                <Field icon={Activity} label="Account status" value={staff.active ? "Active" : "Inactive"} />
+                <Field icon={Radio} label="Vehicle status" value={ambulance?.status || ambulance?.Status || ambulance?.availability || "Not provided"} />
+                <Field icon={UserRound} label="Driver / staff" value={staff.name || staff.fullName || staff.username || staff.email || staff.uid} />
+                <Field icon={MapPin} label="Last GPS update" value={gps ? formatTimestamp(gps.updatedAt) : "No GPS update received"} />
+                <Field icon={Ambulance} label="Registration" value={ambulance?.registrationNumber || ambulance?.vehicleNumber || ambulance?.registration || ambulance?.plateNumber} />
+                <Field icon={Phone} label="Contact" value={ambulance?.phone || ambulance?.contactNumber || staff.phone} />
+                <Field icon={Wifi} label="Location sharing" value={gps ? "Receiving location updates" : "Waiting for GPS integration"} />
+              </div>
+              <p className="mt-5 flex items-start gap-2 rounded-xl bg-slate-950 p-3 text-xs leading-5 text-slate-400"><ShieldCheck className="mt-0.5 shrink-0" size={15} />This dashboard reads assignment and GPS data. It does not change mission status or ambulance assignments, so it does not depend on the broken Accept-button update.</p>
+            </section>
           </div>
         </section>
 
-        {/* Dashboard statistics */}
-        <section className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            icon={Siren}
-            label="Active Assignments"
-            value={activeMissions.length}
-            description="Missions not yet closed"
-            accent="red"
-          />
-
-          <StatCard
-            icon={CheckCircle2}
-            label="Completed Missions"
-            value={completedMissions.length}
-            description="Completed in this demo session"
-            accent="emerald"
-          />
-
-          <StatCard
-            icon={Gauge}
-            label="Vehicle Status"
-            value={ambulanceOnline ? "Ready" : "Offline"}
-            description="Availability can be changed above"
-            accent="cyan"
-          />
-
-          <StatCard
-            icon={Clock3}
-            label="Next Assignment"
-            value={
-              ambulanceOnline && activeMissions.length > 0
-                ? "Pending"
-                : "—"
-            }
-            description="Live assignment feed not connected"
-            accent="amber"
-          />
-        </section>
-
-        {/* Main workspace */}
-        <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-12">
-          {/* Left column */}
-          <div className="space-y-6 xl:col-span-7">
-            {/* Assignments */}
-            <section className={`${panelClass} p-5 sm:p-6`}>
-              <SectionTitle
-                icon={Siren}
-                title="Emergency Assignments"
-                subtitle="Select a mission to view its details."
-                action={
-                  <span className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs text-slate-300">
-                    {displayedMissions.length} missions
-                  </span>
-                }
-              />
-
-              <div className="mb-5 flex gap-2 border-b border-slate-800 pb-3">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("active")}
-                  className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-                    activeTab === "active"
-                      ? "bg-red-500/10 text-red-300"
-                      : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                  }`}
-                >
-                  Active ({activeMissions.length})
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("completed")}
-                  className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-                    activeTab === "completed"
-                      ? "bg-emerald-500/10 text-emerald-300"
-                      : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                  }`}
-                >
-                  Completed ({completedMissions.length})
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                {displayedMissions.map((mission) => {
-                  const selected = selectedMissionId === mission.id;
-
-                  return (
-                    <button
-                      type="button"
-                      key={mission.id}
-                      onClick={() => setSelectedMissionId(mission.id)}
-                      className={`w-full rounded-2xl border p-4 text-left transition ${
-                        selected
-                          ? "border-cyan-500/40 bg-cyan-500/[0.04] ring-1 ring-cyan-500/10"
-                          : "border-slate-800 bg-slate-950/40 hover:border-slate-700"
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="flex items-start gap-3">
-                          <div
-                            className={`rounded-xl p-3 ${
-                              mission.severity === "Critical"
-                                ? "bg-red-500/10 text-red-300"
-                                : "bg-orange-500/10 text-orange-300"
-                            }`}
-                          >
-                            <HeartPulse size={21} />
-                          </div>
-
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="font-semibold text-white">
-                                {mission.emergency}
-                              </h3>
-
-                              <SeverityBadge severity={mission.severity} />
-                            </div>
-
-                            <p className="mt-1 text-xs text-slate-500">
-                              Mission ID: {mission.id}
-                            </p>
-                          </div>
-                        </div>
-
-                        <StatusBadge status={mission.status} />
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                        <div className="flex items-start gap-2 text-slate-400">
-                          <MapPin
-                            size={16}
-                            className="mt-0.5 shrink-0 text-cyan-300"
-                          />
-                          <span>{mission.location}</span>
-                        </div>
-
-                        <div className="flex items-start gap-2 text-slate-400">
-                          <Route
-                            size={16}
-                            className="mt-0.5 shrink-0 text-cyan-300"
-                          />
-                          <span>{mission.distance} away</span>
-                        </div>
-
-                        <div className="flex items-start gap-2 text-slate-400">
-                          <Clock3
-                            size={16}
-                            className="mt-0.5 shrink-0"
-                          />
-                          <span>Estimated travel: {mission.eta}</span>
-                        </div>
-
-                        <div className="flex items-start gap-2 text-slate-400">
-                          <Users
-                            size={16}
-                            className="mt-0.5 shrink-0"
-                          />
-                          <span>
-                            {mission.victims} reported victim(s)
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
-                        <span className="text-xs text-slate-500">
-                          Reported {mission.reportedAt}
-                        </span>
-
-                        <span
-                          className={`inline-flex items-center gap-1 text-xs font-semibold ${
-                            selected ? "text-cyan-300" : "text-slate-400"
-                          }`}
-                        >
-                          {selected ? "Selected" : "View details"}
-                          <ArrowRight size={14} />
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
-
-                {displayedMissions.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-slate-700 px-5 py-12 text-center">
-                    <CheckCircle2
-                      size={32}
-                      className="mx-auto text-emerald-300"
-                    />
-                    <p className="mt-3 font-medium text-white">
-                      No missions in this section
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Assignments will appear here when connected to a backend.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            {/* Selected mission details */}
-            <section className={`${panelClass} p-5 sm:p-6`}>
-              <SectionTitle
-                icon={FileText}
-                title="Mission Details"
-                subtitle="Review the selected incident and update its workflow."
-              />
-
-              {selectedMission ? (
-                <div className="space-y-6">
-                  <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                    <div>
-                      <p className="text-xs text-slate-500">MISSION ID</p>
-                      <p className="mt-1 text-lg font-bold text-white">
-                        {selectedMission.id}
-                      </p>
-                      <p className="mt-1 text-sm text-slate-400">
-                        {selectedMission.emergency}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <SeverityBadge severity={selectedMission.severity} />
-                      <StatusBadge status={selectedMission.status} />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                    <DetailItem
-                      icon={UserRound}
-                      label="Patient / Reporter"
-                      value={selectedMission.patient}
-                    />
-
-                    <DetailItem
-                      icon={Phone}
-                      label="Contact number"
-                      value={selectedMission.phone}
-                    />
-
-                    <DetailItem
-                      icon={MapPin}
-                      label="Incident location"
-                      value={selectedMission.location}
-                    />
-
-                    <DetailItem
-                      icon={Users}
-                      label="Reported victims"
-                      value={selectedMission.victims}
-                    />
-
-                    <DetailItem
-                      icon={Hospital}
-                      label="Suggested destination"
-                      value={selectedMission.destination}
-                    />
-
-                    <DetailItem
-                      icon={Navigation}
-                      label="Incident coordinates"
-                      value={selectedMission.coordinates}
-                    />
-                  </div>
-
-                  <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      Incident description
-                    </p>
-                    <p className="text-sm leading-6 text-slate-300">
-                      {selectedMission.description}
-                    </p>
-                  </div>
-
-                  {selectedMission.status !== "Rejected" &&
-                    selectedMission.status !== "Completed" && (
-                      <div>
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <h3 className="text-sm font-semibold text-white">
-                            Mission workflow
-                          </h3>
-
-                          <span className="text-xs text-slate-500">
-                            Step{" "}
-                            {Math.max(currentWorkflowIndex + 1, 1)} of{" "}
-                            {WORKFLOW.length}
-                          </span>
-                        </div>
-
-                        <div className="mb-5 flex gap-1.5">
-                          {WORKFLOW.map((step, index) => (
-                            <div
-                              key={step}
-                              title={step}
-                              className={`h-1.5 flex-1 rounded-full ${
-                                index <= currentWorkflowIndex
-                                  ? "bg-cyan-400"
-                                  : "bg-slate-800"
-                              }`}
-                            />
-                          ))}
-                        </div>
-
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-300">
-                              <Activity size={20} />
-                            </div>
-
-                            <div>
-                              <p className="text-sm font-semibold text-white">
-                                Current stage: {selectedMission.status}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                Next stage:{" "}
-                                {nextWorkflowStatus || "No further stage"}
-                              </p>
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={advanceMission}
-                            disabled={
-                              !ambulanceOnline ||
-                              !nextWorkflowStatus ||
-                              selectedMission.status === "Assigned"
-                            }
-                            className={`${primaryButton} mt-4 w-full sm:w-auto`}
-                          >
-                            {selectedMission.status === "Assigned"
-                              ? "Accept assignment first"
-                              : `Update to ${nextWorkflowStatus}`}
-                            <ArrowRight size={16} />
-                          </button>
-
-                          {selectedMission.status === "Assigned" && (
-                            <p className="mt-2 text-xs leading-5 text-slate-500">
-                              Accept this assignment from the mission card
-                              before advancing its status.
-                            </p>
-                          )}
-
-                          {!ambulanceOnline && (
-                            <p className="mt-2 text-xs text-amber-300">
-                              Set the ambulance online to update the workflow.
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                  {selectedMission.status === "Completed" && (
-                    <div className="flex items-start gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-                      <BadgeCheck
-                        size={22}
-                        className="shrink-0 text-emerald-300"
-                      />
-                      <div>
-                        <p className="font-semibold text-emerald-200">
-                          Mission completed
-                        </p>
-                        <p className="mt-1 text-sm text-slate-400">
-                          This demonstration assignment has reached its final
-                          workflow stage.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedMission.status === "Rejected" && (
-                    <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-4">
-                      <p className="font-semibold text-slate-300">
-                        Assignment rejected
-                      </p>
-                      <p className="mt-1 text-sm text-slate-500">
-                        This status only changes the local demonstration data.
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      type="button"
-                      onClick={() => openNavigation(selectedMission)}
-                      className={secondaryButton}
-                    >
-                      <Navigation size={16} />
-                      Open navigation
-                      <ExternalLink size={14} />
-                    </button>
-
-                    {selectedMission.status !== "Rejected" &&
-                      selectedMission.status !== "Completed" &&
-                      selectedMission.status !== "Assigned" && (
-                        <button
-                          type="button"
-                          onClick={() => rejectMission(selectedMission)}
-                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 px-4 py-2.5 text-sm font-semibold text-red-300 transition hover:bg-red-500/10"
-                        >
-                          <X size={16} />
-                          Cancel demo assignment
-                        </button>
-                      )}
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-700 p-8 text-center">
-                  <Info size={28} className="mx-auto text-slate-500" />
-                  <p className="mt-3 text-sm text-slate-400">
-                    Select an assignment to view its details.
-                  </p>
-                </div>
-              )}
-            </section>
-          </div>
-
-          {/* Right column */}
-          <div className="space-y-6 xl:col-span-5">
-            {/* Vehicle details */}
-            <section className={`${panelClass} p-5 sm:p-6`}>
-              <SectionTitle
-                icon={Ambulance}
-                title="Vehicle & Crew"
-                subtitle="Demonstration vehicle information."
-                action={
-                  <span className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-2.5 py-1.5 text-xs font-semibold text-cyan-300">
-                    AMB-01
-                  </span>
-                }
-              />
-
-              <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-800/80 to-slate-950 p-5">
-                <div className="absolute -right-5 -top-5 opacity-[0.06]">
-                  <Ambulance size={160} />
-                </div>
-
-                <div className="relative">
-                  <div className="mb-5 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <div className="rounded-lg bg-red-500/10 p-2 text-red-300">
-                        <Ambulance size={20} />
-                      </div>
-                      <span className="font-semibold text-white">
-                        Ambulance Unit 01
-                      </span>
-                    </div>
-
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        ambulanceOnline
-                          ? "bg-emerald-500/10 text-emerald-300"
-                          : "bg-slate-800 text-slate-400"
-                      }`}
-                    >
-                      {ambulanceOnline ? "Available" : "Offline"}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="rounded-xl border border-slate-700/70 bg-slate-950/50 p-3">
-                      <p className="text-xs text-slate-500">Vehicle ID</p>
-                      <p className="mt-1 font-semibold text-white">AMB-01</p>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-700/70 bg-slate-950/50 p-3">
-                      <p className="text-xs text-slate-500">Vehicle type</p>
-                      <p className="mt-1 font-semibold text-white">
-                        Basic Life Support
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setShowVehicleDetails((value) => !value)
-                    }
-                    className="mt-4 flex w-full items-center justify-between rounded-xl border border-slate-700/70 bg-slate-950/50 px-3 py-3 text-sm font-medium text-slate-300 transition hover:bg-slate-900"
-                  >
-                    View vehicle details
-                    <ChevronDown
-                      size={17}
-                      className={`transition ${
-                        showVehicleDetails ? "rotate-180" : ""
-                      }`}
-                    />
-                  </button>
-
-                  {showVehicleDetails && (
-                    <div className="mt-3 space-y-3 rounded-xl border border-slate-700/70 bg-slate-950/50 p-4">
-                      <DetailItem
-                        icon={Users}
-                        label="Crew capacity"
-                        value="Crew details not configured"
-                      />
-                      <DetailItem
-                        icon={ShieldCheck}
-                        label="Equipment status"
-                        value="Not connected to equipment monitoring"
-                      />
-                      <DetailItem
-                        icon={Smartphone}
-                        label="GPS device"
-                        value="Live tracking not connected"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            {/* Route and location */}
-            <section className={`${panelClass} p-5 sm:p-6`}>
-              <SectionTitle
-                icon={Route}
-                title="Route & Location"
-                subtitle="Navigation for the selected incident."
-              />
-
-              {selectedMission ? (
-                <>
-                  <div className="space-y-4">
-                    <div className="flex gap-3">
-                      <div className="flex flex-col items-center">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-500/30 bg-cyan-500/10 text-cyan-300">
-                          <Ambulance size={17} />
-                        </div>
-                        <div className="my-1 h-8 border-l border-dashed border-slate-700" />
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full border border-red-500/30 bg-red-500/10 text-red-300">
-                          <MapPin size={17} />
-                        </div>
-                      </div>
-
-                      <div className="flex-1 space-y-5 pt-1">
-                        <div>
-                          <p className="text-xs text-slate-500">
-                            CURRENT VEHICLE LOCATION
-                          </p>
-                          <p className="mt-1 text-sm font-medium text-white">
-                            Not available
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            Live GPS tracking is not connected.
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-xs text-slate-500">
-                            INCIDENT LOCATION
-                          </p>
-                          <p className="mt-1 text-sm font-medium text-white">
-                            {selectedMission.location}
-                          </p>
-                          <p className="mt-1 text-xs text-cyan-300">
-                            {selectedMission.coordinates}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-                        <div className="flex items-center gap-2 text-slate-400">
-                          <Route size={16} />
-                          <span className="text-xs">Distance</span>
-                        </div>
-                        <p className="mt-2 text-xl font-bold text-white">
-                          {selectedMission.distance}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-                        <div className="flex items-center gap-2 text-slate-400">
-                          <Clock3 size={16} />
-                          <span className="text-xs">Estimated time</span>
-                        </div>
-                        <p className="mt-2 text-xl font-bold text-white">
-                          {selectedMission.eta}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => openNavigation(selectedMission)}
-                    className={`${secondaryButton} mt-4 w-full`}
-                  >
-                    <LocateFixed size={17} />
-                    Open route in Google Maps
-                    <ExternalLink size={14} />
-                  </button>
-
-                  <p className="mt-3 text-xs leading-5 text-slate-500">
-                    Distance and travel time are sample values. Live routing,
-                    traffic and vehicle GPS are not integrated.
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm text-slate-500">
-                  Select a mission to view its route information.
-                </p>
-              )}
-            </section>
-
-            {/* Safety and operational checklist */}
-            <section className={`${panelClass} p-5 sm:p-6`}>
-              <SectionTitle
-                icon={ShieldCheck}
-                title="Operational Checklist"
-                subtitle="A reminder for the response workflow."
-              />
-
-              <div className="space-y-4">
-                {[
-                  {
-                    title: "Review incident details",
-                    description: "Confirm the incident and reported needs.",
-                    icon: FileText,
-                    color: "text-cyan-300 bg-cyan-500/10",
-                  },
-                  {
-                    title: "Confirm patient location",
-                    description:
-                      "Verify the location with the control room or reporter.",
-                    icon: MapPin,
-                    color: "text-sky-300 bg-sky-500/10",
-                  },
-                  {
-                    title: "Coordinate hospital handover",
-                    description:
-                      "Follow the appropriate clinical and handover procedures.",
-                    icon: Hospital,
-                    color: "text-emerald-300 bg-emerald-500/10",
-                  },
-                ].map((item) => {
-                  const Icon = item.icon;
-
-                  return (
-                    <div key={item.title} className="flex items-start gap-3">
-                      <div className={`rounded-xl p-2.5 ${item.color}`}>
-                        <Icon size={18} />
-                      </div>
-
-                      <div>
-                        <p className="text-sm font-medium text-slate-200">
-                          {item.title}
-                        </p>
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          {item.description}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-                <div className="flex items-start gap-2.5">
-                  <Info
-                    size={18}
-                    className="mt-0.5 shrink-0 text-amber-300"
-                  />
-
-                  <div>
-                    <p className="text-sm font-semibold text-amber-200">
-                      Important
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-slate-400">
-                      Follow your authorized emergency response procedures.
-                      This dashboard does not provide clinical instructions
-                      or authorize traffic signal changes.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* Activity log */}
-            <section className={`${panelClass} p-5 sm:p-6`}>
-              <SectionTitle
-                icon={History}
-                title="Recent Activity"
-                subtitle="Updates made during this browser session."
-              />
-
-              <div className="space-y-4">
-                {missions
-                  .filter((mission) =>
-                    ["Completed", "Rejected"].includes(mission.status)
-                  )
-                  .map((mission) => (
-                    <div
-                      key={mission.id}
-                      className="flex items-start gap-3"
-                    >
-                      <div
-                        className={`rounded-xl p-2 ${
-                          mission.status === "Completed"
-                            ? "bg-emerald-500/10 text-emerald-300"
-                            : "bg-slate-800 text-slate-400"
-                        }`}
-                      >
-                        {mission.status === "Completed" ? (
-                          <CheckCircle2 size={17} />
-                        ) : (
-                          <X size={17} />
-                        )}
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-slate-200">
-                          {mission.emergency}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {mission.id} · {mission.status}
-                        </p>
-                      </div>
-
-                      <span className="text-xs text-slate-500">
-                        Demo
-                      </span>
-                    </div>
-                  ))}
-
-                {missions.every(
-                  (mission) =>
-                    !["Completed", "Rejected"].includes(mission.status)
-                ) && (
-                  <div className="py-5 text-center">
-                    <History
-                      size={25}
-                      className="mx-auto text-slate-600"
-                    />
-                    <p className="mt-3 text-sm text-slate-400">
-                      No recent activity yet
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Mission updates will appear here.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </section>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <footer className="mt-8 border-t border-slate-800 py-6">
-          <div className="flex flex-col justify-between gap-3 text-xs text-slate-500 sm:flex-row sm:items-center">
-            <p>
-              © {new Date().getFullYear()} Astralife AI · Emergency Response
-              Prototype
-            </p>
-
-            <div className="flex flex-wrap items-center gap-4">
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                Simulation mode
-              </span>
-
-              <a
-                href="/"
-                className="inline-flex items-center gap-1.5 transition hover:text-white"
-              >
-                <ArrowLeft size={14} />
-                Back to home
-              </a>
-            </div>
-          </div>
-        </footer>
-      </main>
-
-      {/* Toast notification */}
-      {notification && (
-        <div
-          role="status"
-          className={`fixed bottom-5 right-5 z-50 flex max-w-sm items-start gap-3 rounded-2xl border p-4 shadow-2xl ${
-            notification.type === "info"
-              ? "border-cyan-500/30 bg-slate-900"
-              : "border-emerald-500/30 bg-slate-900"
-          }`}
-        >
-          {notification.type === "info" ? (
-            <Info size={19} className="mt-0.5 shrink-0 text-cyan-300" />
-          ) : (
-            <CheckCircle2
-              size={19}
-              className="mt-0.5 shrink-0 text-emerald-300"
-            />
-          )}
-
-          <p className="text-sm leading-5 text-slate-200">
-            {notification.message}
-          </p>
-
-          <button
-            type="button"
-            onClick={() => setNotification(null)}
-            className="ml-2 text-slate-500 transition hover:text-white"
-            aria-label="Dismiss notification"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
-    </div>
+        <footer className="flex flex-col justify-between gap-2 border-t border-slate-800 py-4 text-xs text-slate-400 sm:flex-row"><span>Astralife AI · Emergency response coordination</span><span className="flex items-center gap-2"><Radio size={14} /> Live subscriptions enabled when permitted by Firestore Rules</span></footer>
+      </div>
+    </main>
   );
 }

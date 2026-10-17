@@ -1,931 +1,1291 @@
-import { signOut } from "firebase/auth";
-import { useNavigate } from "react-router-dom";
-import { auth } from "../assets/firebase";
+import { useEffect, useMemo, useState } from "react";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { Link } from "react-router-dom";
+import {
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  where,
+} from "firebase/firestore";
+import { calculateETA } from "../api/eta";
 
-import { useMemo, useState } from "react";
 import {
   Activity,
-  AlertTriangle,
-  Ambulance,
-  ArrowRight,
   BedDouble,
-  Bell,
-  Check,
-  CheckCircle2,
-  Clock3,
-  ClipboardList,
-  FileText,
-  HeartPulse,
+  Building2,
+  Clock,
   Hospital,
-  Info,
+  LogOut,
   MapPin,
-  Menu,
+  Navigation,
   Phone,
-  Plus,
   RefreshCw,
   ShieldCheck,
-  Stethoscope,
-  UserRound,
-  Users,
-  Wifi,
-  LogOut,
-  X,
+  Siren,
+  Truck,
 } from "lucide-react";
 
-const INITIAL_CASES = [
-  {
-    id: "AST-2048",
-    patient: "Emergency Patient",
-    emergency: "Cardiac Emergency",
-    severity: "Critical",
-    status: "Incoming",
-    eta: "6 min",
-    victims: 1,
-    location: "Near City Central Road",
-    ambulance: "AMB-01",
-    reportedAt: "2 min ago",
-    notes: "Urgent cardiac assessment may be required.",
-  },
-  {
-    id: "AST-2051",
-    patient: "Emergency Patient",
-    emergency: "Road Accident",
-    severity: "High",
-    status: "Preparing",
-    eta: "10 min",
-    victims: 2,
-    location: "University Road Junction",
-    ambulance: "AMB-03",
-    reportedAt: "5 min ago",
-    notes: "Multiple victims reported. Details require verification.",
-  },
-  {
-    id: "AST-2055",
-    patient: "Emergency Patient",
-    emergency: "Breathing Difficulty",
-    severity: "Moderate",
-    status: "Received",
-    eta: "15 min",
-    victims: 1,
-    location: "Central Market",
-    ambulance: "AMB-02",
-    reportedAt: "8 min ago",
-    notes: "Respiratory complaint reported by the caller.",
-  },
+import {
+  MapContainer,
+  Marker,
+  Popup,
+  TileLayer,
+  useMap,
+} from "react-leaflet";
+
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
+import { auth, db } from "../assets/firebase";
+
+const DEFAULT_CENTER = [19.076, 72.8777];
+
+const ACTIVE_STATUSES = [
+  "Pending",
+  "Assigned",
+  "Accepted",
+  "En Route",
+  "At Scene",
+  "Transporting",
 ];
 
-const INITIAL_BEDS = {
-  general: { total: 30, occupied: 18 },
-  icu: { total: 10, occupied: 7 },
-  emergency: { total: 8, occupied: 4 },
-};
+const ambulanceIcon = new L.DivIcon({
+  className: "",
+  html: `
+    <div style="
+      width:38px;height:38px;border-radius:50%;
+      background:#0891b2;border:3px solid white;
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 0 16px #0891b288;color:white;font-size:19px;
+    ">🚑</div>
+  `,
+  iconSize: [38, 38],
+  iconAnchor: [19, 19],
+});
 
-const SEVERITY_STYLE = {
-  Critical: "border-red-500/30 bg-red-500/10 text-red-300",
-  High: "border-orange-500/30 bg-orange-500/10 text-orange-300",
-  Moderate: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-};
+const hospitalIcon = new L.DivIcon({
+  className: "",
+  html: `
+    <div style="
+      width:36px;height:36px;border-radius:50%;
+      background:#059669;border:3px solid white;
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 0 12px #05966988;color:white;font-weight:bold;font-size:20px;
+    ">+</div>
+  `,
+  iconSize: [36, 36],
+  iconAnchor: [18, 18],
+});
 
-const STATUS_STYLE = {
-  Incoming: "border-red-500/30 bg-red-500/10 text-red-300",
-  Received: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
-  Preparing: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-  "Ready for Handover":
-    "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-  Completed:
-    "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-};
+function getCoordinates(value) {
+  if (!value) return null;
 
-const panel =
-  "rounded-2xl border border-slate-800 bg-slate-900/80 shadow-lg shadow-black/10";
+  if (Array.isArray(value) && value.length >= 2) {
+    const latitude = Number(value[0]);
+    const longitude = Number(value[1]);
 
-const buttonPrimary =
-  "inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40";
+    if (
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      Math.abs(latitude) <= 90 &&
+      Math.abs(longitude) <= 180
+    ) {
+      return [latitude, longitude];
+    }
+  }
 
-const buttonSecondary =
-  "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-slate-700";
+  if (typeof value !== "object") return null;
 
-function SectionHeading({ icon: Icon, title, subtitle, action }) {
-  return (
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-start gap-3">
-        <div className="rounded-xl border border-slate-700 bg-slate-800 p-2.5 text-cyan-300">
-          <Icon size={19} />
-        </div>
-        <div>
-          <h2 className="font-semibold text-white">{title}</h2>
-          {subtitle && (
-            <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
-          )}
-        </div>
-      </div>
-      {action}
-    </div>
+  const latitude = Number(
+    value.latitude ?? value.lat ?? value._lat
   );
+
+  const longitude = Number(
+    value.longitude ?? value.lng ?? value.lon ?? value._long
+  );
+
+  if (
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    Math.abs(latitude) <= 90 &&
+    Math.abs(longitude) <= 180
+  ) {
+    return [latitude, longitude];
+  }
+
+  return null;
 }
 
-function StatCard({ icon: Icon, label, value, description, color }) {
-  const colors = {
-    red: "border-red-500/20 bg-red-500/10 text-red-300",
+function findCoordinates(...values) {
+  for (const value of values) {
+    const coordinates = getCoordinates(value);
+
+    if (coordinates) return coordinates;
+  }
+
+  return null;
+}
+
+function formatDate(value) {
+  if (!value) return "Time unavailable";
+
+  let date;
+
+  if (typeof value?.toDate === "function") {
+    date = value.toDate();
+  } else if (typeof value === "string" || typeof value === "number") {
+    date = new Date(value);
+  } else if (value instanceof Date) {
+    date = value;
+  }
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return "Time unavailable";
+  }
+
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getNumber(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") {
+      const number = Number(value);
+
+      if (Number.isFinite(number) && number >= 0) {
+        return number;
+      }
+    }
+  }
+
+  return null;
+}
+
+function StatCard({ title, value, subtitle, icon: Icon, accent }) {
+  const accentClasses = {
     cyan: "border-cyan-500/20 bg-cyan-500/10 text-cyan-300",
-    green: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+    emerald: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+    red: "border-red-500/20 bg-red-500/10 text-red-300",
     amber: "border-amber-500/20 bg-amber-500/10 text-amber-300",
   };
 
   return (
-    <div className={`${panel} p-5`}>
+    <div className="rounded-2xl border border-slate-800 bg-[#0c1929] p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm text-slate-400">{label}</p>
-          <p className="mt-3 text-3xl font-bold text-white">{value}</p>
+          <p className="text-sm text-slate-400">{title}</p>
+
+          <p className="mt-3 text-3xl font-bold text-white">
+            {value}
+          </p>
+
+          <p className="mt-2 text-xs text-slate-500">
+            {subtitle}
+          </p>
         </div>
-        <div className={`rounded-xl border p-3 ${colors[color]}`}>
-          <Icon size={21} />
-        </div>
+
+        <span
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${
+            accentClasses[accent] || accentClasses.cyan
+          }`}
+        >
+          <Icon size={22} />
+        </span>
       </div>
-      <p className="mt-3 text-xs text-slate-500">{description}</p>
     </div>
   );
 }
 
-function Badge({ children, className = "" }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${className}`}
-    >
-      {children}
-    </span>
-  );
-}
-
-function SeverityBadge({ severity }) {
-  return (
-    <Badge className={SEVERITY_STYLE[severity] || SEVERITY_STYLE.Moderate}>
-      {severity}
-    </Badge>
-  );
-}
-
-function StatusBadge({ status }) {
-  return (
-    <Badge className={STATUS_STYLE[status] || STATUS_STYLE.Received}>
-      {status}
-    </Badge>
-  );
-}
-
-function BedCard({ title, beds, onChange }) {
-  const available = beds.total - beds.occupied;
+function VacancyCard({ title, available, total, icon: Icon }) {
+  const known = available !== null && total !== null;
   const percentage =
-    beds.total > 0 ? (beds.occupied / beds.total) * 100 : 0;
+    known && total > 0
+      ? Math.min(100, Math.round((available / total) * 100))
+      : 0;
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium text-slate-200">{title}</p>
-        <BedDouble size={18} className="text-cyan-300" />
-      </div>
-
-      <p className="mt-4 text-2xl font-bold text-white">
-        {available}
-        <span className="ml-2 text-sm font-normal text-slate-500">
-          available
+    <div className="rounded-2xl border border-slate-800 bg-[#0c1929] p-5">
+      <div className="flex items-center gap-3">
+        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-300">
+          <Icon size={22} />
         </span>
-      </p>
 
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
-        <div
-          className={`h-full rounded-full ${
-            percentage >= 85 ? "bg-red-500" : "bg-cyan-400"
-          }`}
-          style={{ width: `${percentage}%` }}
-        />
+        <div>
+          <h3 className="font-semibold text-white">{title}</h3>
+          <p className="text-xs text-slate-500">
+            Bed availability
+          </p>
+        </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-        <span>{beds.occupied} occupied</span>
-        <span>{beds.total} total</span>
-      </div>
+      {known ? (
+        <>
+          <div className="mt-5 flex items-end justify-between">
+            <p className="text-3xl font-bold text-white">
+              {available}
+              <span className="text-sm font-normal text-slate-500">
+                {" "}/ {total}
+              </span>
+            </p>
 
-      <div className="mt-4 flex gap-2">
-        <button
-          type="button"
-          onClick={() =>
-            onChange(Math.max(0, beds.occupied - 1))
-          }
-          disabled={beds.occupied === 0}
-          className="flex-1 rounded-lg border border-slate-700 py-2 text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-30"
-        >
-          − Occupied
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            onChange(Math.min(beds.total, beds.occupied + 1))
-          }
-          disabled={beds.occupied === beds.total}
-          className="flex-1 rounded-lg border border-slate-700 py-2 text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-30"
-        >
-          + Occupied
-        </button>
+            <span
+              className={`text-sm font-medium ${
+                available > 0 ? "text-emerald-300" : "text-red-300"
+              }`}
+            >
+              {available > 0 ? "Available" : "Full"}
+            </span>
+          </div>
+
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
+            <div
+              className="h-full rounded-full bg-cyan-400 transition-all"
+              style={{ width: `${percentage}%` }}
+            />
+          </div>
+
+          <p className="mt-2 text-xs text-slate-500">
+            {percentage}% of total beds available
+          </p>
+        </>
+      ) : (
+        <p className="mt-5 text-sm text-amber-300">
+          Vacancy data unavailable
+        </p>
+      )}
+    </div>
+  );
+}
+
+function MapUpdater({ coordinates }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (coordinates) {
+      map.flyTo(coordinates, 14, { duration: 0.8 });
+    }
+  }, [coordinates, map]);
+
+  return null;
+}
+
+function SectionTitle({ icon: Icon, title, subtitle }) {
+  return (
+    <div className="mb-5 flex items-center gap-3">
+      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-300">
+        <Icon size={21} />
+      </span>
+
+      <div>
+        <h2 className="text-lg font-bold text-white">{title}</h2>
+        {subtitle && (
+          <p className="text-sm text-slate-500">{subtitle}</p>
+        )}
       </div>
     </div>
   );
 }
 
 export default function HospitalDashboard() {
-  const [cases, setCases] = useState(INITIAL_CASES);
-  const [beds, setBeds] = useState(INITIAL_BEDS);
-  const [selectedId, setSelectedId] = useState("AST-2048");
-  const [filter, setFilter] = useState("All");
-  const [online, setOnline] = useState(true);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [notification, setNotification] = useState("");
-  const [showBedEditor, setShowBedEditor] = useState(false);
+  const [user, setUser] = useState(null);
+  const [staff, setStaff] = useState(null);
+  const [hospital, setHospital] = useState(null);
+  const [ambulance, setAmbulance] = useState(null);
+  const [ambulanceLocation, setAmbulanceLocation] = useState(null);
+  const [emergencies, setEmergencies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [eta, setEta] = useState(null);
 
-  const selectedCase = cases.find((item) => item.id === selectedId);
+  useEffect(() => {
+    let unsubscribeStaff = null;
 
-  const incomingCases = useMemo(
-    () =>
-      cases.filter(
-        (item) =>
-          item.status !== "Completed" &&
-          item.status !== "Ready for Handover"
-      ),
-    [cases]
-  );
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setStaff(null);
+      setError("");
 
-  const criticalCases = cases.filter(
-    (item) => item.severity === "Critical" && item.status !== "Completed"
-  );
+      if (unsubscribeStaff) {
+        unsubscribeStaff();
+        unsubscribeStaff = null;
+      }
 
-  const filteredCases =
-    filter === "All"
-      ? cases
-      : cases.filter((item) => item.status === filter);
+      if (!currentUser) {
+        setLoading(false);
+        return;
+      }
 
-  const availableBeds = Object.values(beds).reduce(
-    (sum, item) => sum + item.total - item.occupied,
-    0
-  );
+      unsubscribeStaff = onSnapshot(
+        doc(db, "Staff", currentUser.uid),
+        (snapshot) => {
+          if (!snapshot.exists()) {
+            setStaff(null);
+            setError("Your staff profile was not found.");
+            setLoading(false);
+            return;
+          }
 
-  function notify(message) {
-    setNotification(message);
-    window.setTimeout(() => setNotification(""), 3000);
-  }
+          const staffData = {
+            id: snapshot.id,
+            ...snapshot.data(),
+          };
 
-  const navigate = useNavigate();
+          if (
+            staffData.role !== "hospital" ||
+            staffData.active !== true
+          ) {
+            setStaff(null);
+            setError("Your account is not an active hospital account.");
+            setLoading(false);
+            return;
+          }
 
-  async function handleLogout() {
-    try {
-      await signOut(auth);
-      navigate("/login", { replace: true });
-    } catch (error) {
-      console.error("Logout failed:", error);
-      notify("Unable to log out. Please try again.");
-    }
-  }
+          setStaff(staffData);
+          setError("");
+          setLoading(false);
+        },
+        (listenerError) => {
+          console.error("Staff listener failed:", listenerError);
+          setError("Unable to load your staff profile.");
+          setLoading(false);
+        }
+      );
+    });
 
-  function updateCaseStatus(id, status) {
-    setCases((previous) =>
-      previous.map((item) =>
-        item.id === id ? { ...item, status } : item
-      )
-    );
-    notify(`Case ${id} updated to ${status}.`);
-  }
+    return () => {
+      unsubscribeAuth();
 
-  function updateBeds(type, occupied) {
-    setBeds((previous) => ({
-      ...previous,
-      [type]: { ...previous[type], occupied },
-    }));
-  }
-
-  function addDemoCase() {
-    const newCase = {
-      id: `AST-${Math.floor(2100 + Math.random() * 800)}`,
-      patient: "New Demonstration Patient",
-      emergency: "Medical Emergency",
-      severity: "High",
-      status: "Incoming",
-      eta: "12 min",
-      victims: 1,
-      location: "Demonstration Location",
-      ambulance: "AMB-04",
-      reportedAt: "Just now",
-      notes: "Sample case created from the Hospital Dashboard.",
+      if (unsubscribeStaff) {
+        unsubscribeStaff();
+      }
     };
+  }, []);
 
-    setCases((previous) => [newCase, ...previous]);
-    setSelectedId(newCase.id);
-    notify("A demonstration case has been added.");
+  const hospitalId =
+    staff?.hospitalId ||
+    staff?.hospitalID ||
+    staff?.assignedHospitalId ||
+    null;
+
+  useEffect(() => {
+    if (!hospitalId) {
+      setHospital(null);
+      return;
+    }
+
+    return onSnapshot(
+      doc(db, "Hospitals", hospitalId),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setHospital({
+            id: snapshot.id,
+            ...snapshot.data(),
+          });
+          setError("");
+        } else {
+          setHospital(null);
+        }
+      },
+      (listenerError) => {
+        console.error("Hospital listener failed:", listenerError);
+        setError(
+          listenerError?.code === "permission-denied"
+            ? "Firestore denied access to this hospital. Check Firestore rules and Staff/{uid}.hospitalId."
+            : "Unable to load hospital details. Verify the hospital document ID and Firestore connection."
+        );
+      }
+    );
+  }, [hospitalId]);
+
+  useEffect(() => {
+    if (!hospitalId) {
+      setEmergencies([]);
+      return;
+    }
+
+    const emergencyQuery = query(
+      collection(db, "Emergency_Cases"),
+      where("hospitalId", "==", hospitalId)
+    );
+
+    return onSnapshot(
+      emergencyQuery,
+      (snapshot) => {
+        const records = snapshot.docs
+          .map((item) => ({
+            id: item.id,
+            ...item.data(),
+          }))
+          .filter((item) => {
+            const status = String(
+              item.Status ?? item.status ?? ""
+            ).toLowerCase();
+
+            return (
+              ACTIVE_STATUSES.some(
+                (activeStatus) =>
+                  activeStatus.toLowerCase() === status
+              ) ||
+              status === ""
+            );
+          })
+          .sort((a, b) => {
+            const aTime =
+              a.createdAt?.toMillis?.() ??
+              new Date(a.createdAt || 0).getTime();
+
+            const bTime =
+              b.createdAt?.toMillis?.() ??
+              new Date(b.createdAt || 0).getTime();
+
+            return bTime - aTime;
+          });
+
+        setEmergencies(records);
+      },
+      (listenerError) => {
+        console.error("Emergency listener failed:", listenerError);
+        setError(
+          "Unable to load emergencies. Check Firestore permissions and hospitalId."
+        );
+      }
+    );
+  }, [hospitalId]);
+
+  const selectedEmergency = useMemo(() => {
+    return emergencies.find(
+      (item) =>
+        item.ambulanceId ||
+        item.ambulanceID
+    ) || emergencies[0] || null;
+  }, [emergencies]);
+
+  const ambulanceId =
+    selectedEmergency?.ambulanceId ||
+    selectedEmergency?.ambulanceID ||
+    null;
+
+  useEffect(() => {
+    if (!ambulanceId) {
+      setAmbulance(null);
+      setAmbulanceLocation(null);
+      return;
+    }
+
+    return onSnapshot(
+      doc(db, "Ambulances", ambulanceId),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setAmbulance({
+            id: snapshot.id,
+            ...snapshot.data(),
+          });
+        } else {
+          setAmbulance({
+            id: ambulanceId,
+          });
+        }
+      },
+      (listenerError) => {
+        console.error("Ambulance listener failed:", listenerError);
+      }
+    );
+  }, [ambulanceId]);
+
+  useEffect(() => {
+    if (!ambulanceId) {
+      setAmbulanceLocation(null);
+      return;
+    }
+
+    const locationQuery = query(
+      collection(db, "Ambulance_Locations"),
+      where("ambulanceId", "==", ambulanceId)
+    );
+
+    return onSnapshot(
+      locationQuery,
+      (snapshot) => {
+        if (snapshot.empty) {
+          setAmbulanceLocation(null);
+          return;
+        }
+
+        const records = snapshot.docs.map((item) => ({
+          id: item.id,
+          ...item.data(),
+        }));
+
+        records.sort((a, b) => {
+          const aTime =
+            a.updatedAt?.toMillis?.() ??
+            new Date(a.updatedAt || 0).getTime();
+
+          const bTime =
+            b.updatedAt?.toMillis?.() ??
+            new Date(b.updatedAt || 0).getTime();
+
+          return bTime - aTime;
+        });
+
+        const latest = records[0];
+
+        const coordinates = findCoordinates(
+          latest.location,
+          latest.coordinates,
+          latest
+        );
+
+        setAmbulanceLocation(
+          coordinates
+            ? {
+                coordinates,
+                updatedAt: latest.updatedAt || null,
+                trackingStatus: latest.trackingStatus || "Unknown",
+              }
+            : null
+        );
+      },
+      (listenerError) => {
+        console.error("Ambulance location listener failed:", listenerError);
+      }
+    );
+  }, [ambulanceId]);
+
+  const hospitalCoordinates = findCoordinates(
+    hospital?.location,
+    hospital?.coordinates,
+    hospital?.addressLocation,
+    hospital
+  );
+
+  const ambulanceCoordinates =
+    ambulanceLocation?.coordinates || null;
+
+  const mapCenter =
+    ambulanceCoordinates ||
+    hospitalCoordinates ||
+    DEFAULT_CENTER;
+
+  // Calculate ETA from ambulance to hospital when both coordinates are available
+  useEffect(() => {
+    if (!ambulanceCoordinates || !hospitalCoordinates) {
+      setEta(null);
+      return;
+    }
+    let cancelled = false;
+    const gpsDate = ambulanceLocation?.updatedAt
+      ? (ambulanceLocation.updatedAt.toDate?.() || new Date(ambulanceLocation.updatedAt))
+      : null;
+    calculateETA(
+      ambulanceCoordinates[0],
+      ambulanceCoordinates[1],
+      hospitalCoordinates[0],
+      hospitalCoordinates[1],
+      gpsDate
+    ).then((result) => {
+      if (!cancelled) setEta(result);
+    }).catch((err) => {
+      console.warn("Hospital ETA calc failed:", err);
+    });
+    return () => { cancelled = true; };
+  }, [
+    ambulanceCoordinates?.[0],
+    ambulanceCoordinates?.[1],
+    hospitalCoordinates?.[0],
+    hospitalCoordinates?.[1],
+  ]);
+
+  const vacancy = hospital?.vacancy || hospital?.beds || {};
+
+  const generalAvailable = getNumber(
+    vacancy.generalAvailable,
+    vacancy.generalWardAvailable,
+    vacancy.generalWard?.available,
+    hospital?.generalWardAvailable,
+    hospital?.generalWardVacancy,
+    hospital?.availableGeneralBeds
+  );
+
+  const generalTotal = getNumber(
+    vacancy.generalTotal,
+    vacancy.generalWardTotal,
+    vacancy.generalWard?.total,
+    hospital?.generalWardTotal,
+    hospital?.totalGeneralBeds
+  );
+
+  const icuAvailable = getNumber(
+    vacancy.icuAvailable,
+    vacancy.icu?.available,
+    hospital?.icuAvailable,
+    hospital?.icuVacancy,
+    hospital?.availableICUBeds
+  );
+
+  const icuTotal = getNumber(
+    vacancy.icuTotal,
+    vacancy.icu?.total,
+    hospital?.icuTotal,
+    hospital?.totalICUBeds
+  );
+
+  const emergencyAvailable = getNumber(
+    vacancy.emergencyAvailable,
+    vacancy.emergencyWardAvailable,
+    vacancy.emergencyWard?.available,
+    hospital?.emergencyWardAvailable,
+    hospital?.emergencyWardVacancy,
+    hospital?.availableEmergencyBeds
+  );
+
+  const emergencyTotal = getNumber(
+    vacancy.emergencyTotal,
+    vacancy.emergencyWardTotal,
+    vacancy.emergencyWard?.total,
+    hospital?.emergencyWardTotal,
+    hospital?.totalEmergencyBeds
+  );
+
+  const hospitalName =
+    hospital?.name ||
+    hospital?.hospitalName ||
+    staff?.hospitalName ||
+    "Hospital";
+
+  const reportedTime =
+    selectedEmergency?.createdAt ||
+    selectedEmergency?.reportedAt ||
+    selectedEmergency?.timestamp;
+
+  const routeUrl =
+    ambulanceCoordinates && hospitalCoordinates
+      ? `https://www.google.com/maps/dir/${ambulanceCoordinates[0]},${ambulanceCoordinates[1]}/${hospitalCoordinates[0]},${hospitalCoordinates[1]}`
+      : ambulanceCoordinates
+      ? `https://www.google.com/maps?q=${ambulanceCoordinates[0]},${ambulanceCoordinates[1]}`
+      : null;
+
+  const handleLogout = async () => {
+    try {
+      setLoggingOut(true);
+      await signOut(auth);
+    } catch (logoutError) {
+      console.error("Logout failed:", logoutError);
+      setError("Unable to log out. Please try again.");
+      setLoggingOut(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#07111f] text-cyan-300">
+        <RefreshCw className="mr-3 animate-spin" size={22} />
+        Loading hospital dashboard...
+      </div>
+    );
   }
 
-  function openMaps(item) {
-    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-      item.location
-    )}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+  if (!user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#07111f] px-4 text-white">
+        <div className="max-w-md rounded-2xl border border-slate-800 bg-[#0c1929] p-8 text-center">
+          <ShieldCheck className="mx-auto mb-4 text-cyan-300" size={40} />
+          <h1 className="text-xl font-bold">Authentication Required</h1>
+          <p className="mt-3 text-sm text-slate-400">
+            Please log in using your hospital staff account.
+          </p>
+          <Link
+            to="/"
+            className="mt-6 inline-block rounded-xl bg-cyan-500 px-5 py-3 font-semibold text-slate-950"
+          >
+            Return Home
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-40 border-b border-slate-800 bg-slate-950/95 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
-          <a href="/" className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-red-600">
-              <Hospital size={24} />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-white">
-                ASTRALIFE <span className="text-red-400">AI</span>
-              </h1>
-              <p className="text-xs text-slate-400">Hospital Operations</p>
-            </div>
-          </a>
+    <div className="min-h-screen bg-[#07111f] px-4 py-6 text-white sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        {/* Header */}
+        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-300">
+              <Hospital size={26} />
+            </span>
 
-          <div className="hidden items-center gap-3 md:flex">
-            <span
-              className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
-                online
-                  ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
-                  : "border-slate-700 bg-slate-900 text-slate-400"
-              }`}
-            >
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  online ? "bg-emerald-400" : "bg-slate-500"
-                }`}
-              />
-              {online ? "Receiving cases" : "Unavailable"}
+            <div>
+              <h1 className="text-xl font-bold">
+                Astralife <span className="text-cyan-400">AI</span>
+              </h1>
+              <p className="text-sm text-slate-500">
+                Hospital Response Dashboard
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="hidden items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300 sm:flex">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+              Live Monitoring
             </span>
 
             <button
               type="button"
-              onClick={() => setOnline((value) => !value)}
-              className={buttonSecondary}
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 transition hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
             >
-              <Wifi size={16} />
-              {online ? "Set Unavailable" : "Set Available"}
+              <LogOut size={17} />
+              {loggingOut ? "Logging out..." : "Logout"}
             </button>
           </div>
+        </header>
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            className={buttonSecondary}
+        {error && (
+          <div
+            role="alert"
+            className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200"
           >
-            <LogOut size={16} />
-            Logout
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setMenuOpen((value) => !value)}
-            className="rounded-xl border border-slate-800 bg-slate-900 p-2.5 text-slate-300 md:hidden"
-            aria-label="Toggle menu"
-          >
-            {menuOpen ? <X size={21} /> : <Menu size={21} />}
-          </button>
-        </div>
-
-        {menuOpen && (
-          <div className="border-t border-slate-800 bg-slate-900 p-4 md:hidden">
-            <div className="flex flex-col gap-3">
-              <button
-                type="button"
-                onClick={() => setOnline((value) => !value)}
-                className={`${buttonSecondary} w-full`}
-              >
-                <Wifi size={16} />
-                {online ? "Set Unavailable" : "Set Available"}
-              </button>
-                
-              <button
-                type="button"
-                onClick={handleLogout}
-                className={`${buttonSecondary} w-full`}
-              >
-                <LogOut size={16} />
-                Logout
-              </button>
-            </div>
+            {error}
           </div>
         )}
-      </header>
 
-      <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-        <div className="mb-7 flex items-start gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
-          <Info size={20} className="mt-0.5 shrink-0 text-amber-300" />
-          <div>
-            <p className="text-sm font-semibold text-amber-200">
-              Demonstration mode
-            </p>
-            <p className="mt-1 text-sm leading-6 text-slate-400">
-              Cases and bed counts are local sample data. This dashboard
-              is not connected to a hospital information system, patient
-              records, or a live ambulance network.
-            </p>
-          </div>
-        </div>
+        {/* Hospital identity */}
+        <section className="mb-6 rounded-2xl border border-slate-800 bg-[#0c1929] p-5 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-300">
+                <Building2 size={29} />
+              </span>
 
-        <section className="mb-8 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
-          <div>
-            <div className="mb-3 flex items-center gap-2 text-sm text-cyan-300">
-              <Activity size={17} />
-              Emergency Care Network
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">
+                  Hospital Control
+                </p>
+
+                <h2 className="mt-1 text-2xl font-bold sm:text-3xl">
+                  {hospitalName}
+                </h2>
+
+                <p className="mt-2 text-sm text-slate-400">
+                  {hospital?.address ||
+                    hospital?.location?.address ||
+                    hospital?.city ||
+                    "Hospital address unavailable"}
+                </p>
+              </div>
             </div>
-            <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-              Hospital Dashboard
-            </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400 sm:text-base">
-              Review incoming emergencies, prepare response teams,
-              monitor bed availability and manage patient handovers.
-            </p>
+
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 px-4 py-3">
+              <p className="text-xs text-slate-500">Hospital ID</p>
+              <p className="mt-1 font-mono text-sm text-cyan-300">
+                {hospitalId || "Not configured"}
+              </p>
+            </div>
           </div>
-
-          <button
-            type="button"
-            onClick={addDemoCase}
-            disabled={!online}
-            className={buttonPrimary}
-          >
-            <Plus size={17} />
-            Add Demo Case
-          </button>
         </section>
 
-        <section className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {/* Overview cards */}
+        <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
-            icon={ClipboardList}
-            label="Open Cases"
-            value={incomingCases.length}
-            description="Cases not yet completed"
-            color="cyan"
+            title="Active Emergencies"
+            value={emergencies.length}
+            subtitle="Assigned to this hospital"
+            icon={Siren}
+            accent="red"
           />
+
           <StatCard
-            icon={AlertTriangle}
-            label="Critical Cases"
-            value={criticalCases.length}
-            description="Require immediate review"
-            color="red"
-          />
-          <StatCard
-            icon={BedDouble}
-            label="Available Beds"
-            value={availableBeds}
-            description="Across all configured categories"
-            color="green"
-          />
-          <StatCard
-            icon={Ambulance}
-            label="Incoming Ambulances"
-            value={
-              cases.filter(
-                (item) =>
-                  item.status === "Incoming" ||
-                  item.status === "Preparing"
-              ).length
+            title="Ambulance Tracking"
+            value={ambulanceCoordinates ? "LIVE" : "Waiting"}
+            subtitle={
+              ambulanceLocation?.updatedAt
+                ? `Updated ${formatDate(ambulanceLocation.updatedAt)}`
+                : "Awaiting GPS coordinates"
             }
-            description="Based on sample case statuses"
-            color="amber"
+            icon={Navigation}
+            accent="cyan"
+          />
+
+          <StatCard
+            title="Emergency Reported"
+            value={
+              reportedTime
+                ? formatDate(reportedTime)
+                : "No active case"
+            }
+            subtitle="Selected emergency"
+            icon={Clock}
+            accent="amber"
+          />
+
+          <StatCard
+            title="Hospital Status"
+            value={hospital?.active === false ? "Inactive" : "Available"}
+            subtitle="Hospital profile status"
+            icon={Activity}
+            accent="emerald"
           />
         </section>
 
-        <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-12">
-          <div className="space-y-6 xl:col-span-7">
-            <section className={`${panel} p-5 sm:p-6`}>
-              <SectionHeading
-                icon={Bell}
-                title="Incoming Emergency Cases"
-                subtitle="Select a case to review its details."
-                action={
-                  <span className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-300">
-                    {filteredCases.length} cases
-                  </span>
-                }
-              />
+        {/* Bed availability */}
+        <section className="mb-8">
+          <SectionTitle
+            icon={BedDouble}
+            title="Hospital Bed Availability"
+            subtitle="Current capacity information from Firestore"
+          />
 
-              <div className="mb-5 flex flex-wrap gap-2">
-                {["All", "Incoming", "Received", "Preparing", "Ready for Handover", "Completed"].map(
-                  (item) => (
-                    <button
-                      type="button"
-                      key={item}
-                      onClick={() => setFilter(item)}
-                      className={`rounded-lg px-3 py-2 text-xs font-medium transition ${
-                        filter === item
-                          ? "bg-cyan-500/10 text-cyan-300"
-                          : "bg-slate-800 text-slate-400 hover:text-white"
-                      }`}
-                    >
-                      {item}
-                    </button>
-                  )
-                )}
+          <div className="grid gap-4 md:grid-cols-3">
+            <VacancyCard
+              title="General Ward"
+              available={generalAvailable}
+              total={generalTotal}
+              icon={BedDouble}
+            />
+
+            <VacancyCard
+              title="Intensive Care Unit"
+              available={icuAvailable}
+              total={icuTotal}
+              icon={Activity}
+            />
+
+            <VacancyCard
+              title="Emergency Ward"
+              available={emergencyAvailable}
+              total={emergencyTotal}
+              icon={Siren}
+            />
+          </div>
+        </section>
+
+        {/* Live map */}
+        <section className="mb-8">
+          <SectionTitle
+            icon={MapPin}
+            title="Live Ambulance Location"
+            subtitle="Ambulance GPS updates and hospital location"
+          />
+
+          <div className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0c1929]">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4">
+              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
+                <span className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full bg-cyan-400" />
+                  Ambulance
+                </span>
+
+                <span className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full bg-emerald-400" />
+                  Hospital
+                </span>
               </div>
 
-              <div className="space-y-3">
-                {filteredCases.map((item) => (
-                  <button
-                    type="button"
-                    key={item.id}
-                    onClick={() => setSelectedId(item.id)}
-                    className={`w-full rounded-2xl border p-4 text-left transition ${
-                      selectedId === item.id
-                        ? "border-cyan-500/40 bg-cyan-500/[0.04]"
-                        : "border-slate-800 bg-slate-950/40 hover:border-slate-700"
-                    }`}
+              {routeUrl && (
+                <a
+                  href={routeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/20"
+                >
+                  <Navigation size={15} />
+                  Open Route
+                </a>
+              )}
+            </div>
+
+            <div className="h-[400px] w-full">
+              <MapContainer
+                center={mapCenter}
+                zoom={12}
+                scrollWheelZoom
+                className="h-full w-full"
+              >
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+
+                <MapUpdater coordinates={ambulanceCoordinates} />
+
+                {ambulanceCoordinates && (
+                  <Marker
+                    position={ambulanceCoordinates}
+                    icon={ambulanceIcon}
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="flex items-start gap-3">
-                        <div
-                          className={`rounded-xl p-3 ${
-                            item.severity === "Critical"
-                              ? "bg-red-500/10 text-red-300"
-                              : "bg-orange-500/10 text-orange-300"
-                          }`}
-                        >
-                          <HeartPulse size={21} />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-white">
-                            {item.emergency}
-                          </h3>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {item.id} · {item.ambulance}
-                          </p>
-                        </div>
-                      </div>
+                    <Popup>
+                      <strong>Ambulance</strong>
+                      <br />
+                      {ambulance?.vehicleNumber ||
+                        ambulance?.registrationNumber ||
+                        ambulance?.id ||
+                        ambulanceId}
+                    </Popup>
+                  </Marker>
+                )}
 
-                      <StatusBadge status={item.status} />
-                    </div>
+                {hospitalCoordinates && (
+                  <Marker
+                    position={hospitalCoordinates}
+                    icon={hospitalIcon}
+                  >
+                    <Popup>
+                      <strong>{hospitalName}</strong>
+                      <br />
+                      Hospital location
+                    </Popup>
+                  </Marker>
+                )}
+              </MapContainer>
+            </div>
 
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <SeverityBadge severity={item.severity} />
-                      <Badge className="border-slate-700 bg-slate-800 text-slate-300">
-                        {item.victims} reported victim(s)
-                      </Badge>
-                    </div>
+            {!ambulanceCoordinates && (
+              <div className="border-t border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-200">
+                <MapPin size={17} className="mr-2 inline" />
+                Ambulance GPS coordinates are not available yet. The map
+                will update when the location publisher writes coordinates
+                for the assigned ambulance.
+              </div>
+            )}
+          </div>
+        </section>
 
-                    <div className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                      <div className="flex items-center gap-2 text-slate-400">
-                        <MapPin size={15} className="text-cyan-300" />
-                        {item.location}
-                      </div>
-                      <div className="flex items-center gap-2 text-slate-400">
-                        <Clock3 size={15} />
-                        ETA: {item.eta}
-                      </div>
-                    </div>
+        {/* ETA Panel */}
+        {(ambulanceCoordinates || eta) && (
+          <section className="mb-8 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-5">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-300">
+                <Clock size={21} />
+              </span>
+              <div>
+                <h2 className="text-lg font-bold text-white">Ambulance ETA to Hospital</h2>
+                <p className="text-sm text-slate-500">Time for ambulance to reach this hospital</p>
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-800 bg-[#0c1929] p-4">
+                <p className="text-xs text-slate-500">ETA</p>
+                <p className="mt-2 text-2xl font-bold text-emerald-300">
+                  {eta ? `${eta.durationMinutes} min` : ambulanceCoordinates ? "Calculating…" : "--"}
+                </p>
+                {eta?.isStale && (
+                  <p className="mt-1 text-xs text-amber-400">⚠ GPS data may be stale</p>
+                )}
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-[#0c1929] p-4">
+                <p className="text-xs text-slate-500">Distance</p>
+                <p className="mt-2 text-2xl font-bold text-cyan-300">
+                  {eta ? `${eta.distanceKm} km` : "--"}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {eta?.source === "osrm" ? "Road route" : eta?.source === "haversine-fallback" ? "Approximate" : ""}
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-[#0c1929] p-4">
+                <p className="text-xs text-slate-500">Est. Arrival</p>
+                <p className="mt-2 text-xl font-bold text-white">
+                  {eta?.arrivalTime
+                    ? eta.arrivalTime.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+                    : "--"}
+                </p>
+                {ambulanceLocation?.updatedAt && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    GPS: {formatDate(ambulanceLocation.updatedAt)}
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
 
-                    <div className="mt-4 flex items-center justify-between border-t border-slate-800 pt-3">
-                      <span className="text-xs text-slate-500">
-                        Reported {item.reportedAt}
-                      </span>
-                      <span className="flex items-center gap-1 text-xs font-semibold text-cyan-300">
-                        View details <ArrowRight size={14} />
-                      </span>
-                    </div>
-                  </button>
+        {/* Emergency and ambulance details */}
+        <section className="mb-8 grid gap-6 lg:grid-cols-2">
+          <div className="rounded-2xl border border-slate-800 bg-[#0c1929] p-5 sm:p-6">
+            <SectionTitle
+              icon={Siren}
+              title="Emergency Details"
+              subtitle="Latest emergency assigned to this hospital"
+            />
+
+            {selectedEmergency ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
+                  <p className="text-xs text-slate-500">
+                    Emergency Reference
+                  </p>
+                  <p className="mt-1 break-all font-mono text-sm text-cyan-300">
+                    {selectedEmergency.id}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                  <span className="text-sm text-slate-400">
+                    Emergency Type
+                  </span>
+                  <span className="text-right text-sm text-white">
+                    {selectedEmergency.emergencyType ||
+                      selectedEmergency.type ||
+                      "SOS Emergency"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                  <span className="text-sm text-slate-400">
+                    Reported At
+                  </span>
+                  <span className="text-right text-sm text-white">
+                    {formatDate(reportedTime)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                  <span className="text-sm text-slate-400">
+                    Status
+                  </span>
+                  <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300">
+                    {selectedEmergency.Status ||
+                      selectedEmergency.status ||
+                      "Unknown"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-slate-400">
+                    Ambulance ID
+                  </span>
+                  <span className="break-all text-right font-mono text-sm text-white">
+                    {ambulanceId || "Not assigned"}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-6 text-center">
+                <Siren
+                  className="mx-auto mb-3 text-slate-600"
+                  size={30}
+                />
+                <p className="text-sm text-slate-300">
+                  No active emergency assigned to this hospital.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-[#0c1929] p-5 sm:p-6">
+            <SectionTitle
+              icon={Truck}
+              title="Ambulance Details"
+              subtitle="Information about the assigned vehicle"
+            />
+
+            {ambulance ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
+                  <p className="text-xs text-slate-500">
+                    Ambulance Identifier
+                  </p>
+                  <p className="mt-1 break-all font-mono text-sm text-cyan-300">
+                    {ambulance.id}
+                  </p>
+                </div>
+
+                {[
+                  [
+                    "Vehicle Number",
+                    ambulance.vehicleNumber ||
+                      ambulance.registrationNumber ||
+                      ambulance.numberPlate,
+                  ],
+                  [
+                    "Driver Name",
+                    ambulance.driverName || ambulance.name,
+                  ],
+                  [
+                    "Driver Contact",
+                    ambulance.driverPhone ||
+                      ambulance.phone ||
+                      ambulance.contact,
+                  ],
+                  [
+                    "Vehicle Type",
+                    ambulance.vehicleType || ambulance.type,
+                  ],
+                  [
+                    "Vehicle Status",
+                    ambulance.status ||
+                      ambulance.Status ||
+                      ambulance.trackingStatus,
+                  ],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="flex items-start justify-between gap-4 border-b border-slate-800 pb-3 last:border-0"
+                  >
+                    <span className="text-sm text-slate-400">
+                      {label}
+                    </span>
+                    <span className="break-words text-right text-sm text-white">
+                      {value || "Not available"}
+                    </span>
+                  </div>
                 ))}
 
-                {filteredCases.length === 0 && (
-                  <div className="py-10 text-center text-sm text-slate-500">
-                    No cases match this filter.
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className={`${panel} p-5 sm:p-6`}>
-              <SectionHeading
-                icon={FileText}
-                title="Selected Patient Case"
-                subtitle="Review the incident and update its hospital status."
-              />
-
-              {selectedCase ? (
-                <div className="space-y-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-                    <div>
-                      <p className="text-xs text-slate-500">CASE ID</p>
-                      <h3 className="mt-1 text-lg font-bold text-white">
-                        {selectedCase.id}
-                      </h3>
-                      <p className="mt-1 text-sm text-slate-400">
-                        {selectedCase.patient}
-                      </p>
-                    </div>
-                    <SeverityBadge severity={selectedCase.severity} />
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div className="flex gap-3">
-                      <UserRound size={18} className="text-slate-500" />
-                      <div>
-                        <p className="text-xs text-slate-500">
-                          Patient / Reporter
-                        </p>
-                        <p className="mt-1 text-sm text-slate-200">
-                          {selectedCase.patient}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-3">
-                      <Ambulance size={18} className="text-slate-500" />
-                      <div>
-                        <p className="text-xs text-slate-500">
-                          Ambulance
-                        </p>
-                        <p className="mt-1 text-sm text-slate-200">
-                          {selectedCase.ambulance}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-3">
-                      <MapPin size={18} className="text-slate-500" />
-                      <div>
-                        <p className="text-xs text-slate-500">
-                          Incident location
-                        </p>
-                        <p className="mt-1 text-sm text-slate-200">
-                          {selectedCase.location}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-3">
-                      <Users size={18} className="text-slate-500" />
-                      <div>
-                        <p className="text-xs text-slate-500">
-                          Reported victims
-                        </p>
-                        <p className="mt-1 text-sm text-slate-200">
-                          {selectedCase.victims}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Incident notes
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-slate-300">
-                      {selectedCase.notes}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="mb-3 text-sm font-semibold text-white">
-                      Hospital response
-                    </p>
-
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {[
-                        { status: "Received", label: "Mark Received" },
-                        { status: "Preparing", label: "Prepare Team" },
-                        {
-                          status: "Ready for Handover",
-                          label: "Ready for Handover",
-                        },
-                        { status: "Completed", label: "Complete Case" },
-                      ].map((action) => (
-                        <button
-                          type="button"
-                          key={action.status}
-                          disabled={
-                            !online ||
-                            selectedCase.status === action.status
-                          }
-                          onClick={() =>
-                            updateCaseStatus(selectedCase.id, action.status)
-                          }
-                          className={
-                            action.status === "Completed"
-                              ? `${buttonPrimary} w-full`
-                              : `${buttonSecondary} w-full`
-                          }
-                        >
-                          <CheckCircle2 size={16} />
-                          {action.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {!online && (
-                      <p className="mt-3 text-xs text-amber-300">
-                        Set the hospital to available before changing case status.
-                      </p>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => openMaps(selectedCase)}
-                    className={`${buttonSecondary} w-full`}
+                {ambulance.driverPhone || ambulance.phone ? (
+                  <a
+                    href={`tel:${
+                      ambulance.driverPhone || ambulance.phone
+                    }`}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-sm font-semibold text-cyan-300 hover:bg-cyan-500/20"
                   >
-                    <MapPin size={16} />
-                    Open incident location in Maps
-                  </button>
-                </div>
-              ) : (
-                <p className="text-sm text-slate-500">
-                  Select a case to review its details.
+                    <Phone size={17} />
+                    Contact Ambulance
+                  </a>
+                ) : null}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-6 text-center">
+                <Truck
+                  className="mx-auto mb-3 text-slate-600"
+                  size={30}
+                />
+                <p className="text-sm text-slate-300">
+                  {ambulanceId
+                    ? "Loading ambulance information..."
+                    : "No ambulance assigned to the selected emergency."}
                 </p>
-              )}
-            </section>
+              </div>
+            )}
           </div>
+        </section>
 
-          <div className="space-y-6 xl:col-span-5">
-            <section className={`${panel} p-5 sm:p-6`}>
-              <SectionHeading
-                icon={BedDouble}
-                title="Bed Availability"
-                subtitle="Update sample occupancy figures."
-                action={
-                  <button
-                    type="button"
-                    onClick={() => setShowBedEditor((value) => !value)}
-                    className="rounded-lg border border-slate-700 bg-slate-800 p-2 text-slate-300 hover:bg-slate-700"
-                    aria-label="Toggle bed editor"
-                  >
-                    <RefreshCw size={16} />
-                  </button>
-                }
-              />
-
-              {showBedEditor && (
-                <div className="mb-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs leading-5 text-slate-400">
-                  Use the controls on each category to adjust the
-                  demonstration occupied-bed count. Total capacity remains
-                  fixed in this prototype.
-                </div>
-              )}
-
-              <div className="space-y-4">
-                <BedCard
-                  title="General Ward"
-                  beds={beds.general}
-                  onChange={(value) => updateBeds("general", value)}
-                />
-                <BedCard
-                  title="Intensive Care Unit (ICU)"
-                  beds={beds.icu}
-                  onChange={(value) => updateBeds("icu", value)}
-                />
-                <BedCard
-                  title="Emergency Department"
-                  beds={beds.emergency}
-                  onChange={(value) => updateBeds("emergency", value)}
-                />
-              </div>
-            </section>
-
-            <section className={`${panel} p-5 sm:p-6`}>
-              <SectionHeading
-                icon={Stethoscope}
-                title="Emergency Team Readiness"
-                subtitle="Illustrative readiness checklist."
-              />
-
-              <div className="space-y-4">
-                {[
-                  {
-                    title: "Emergency response team",
-                    description: "Team availability must be confirmed locally.",
-                    icon: Users,
-                  },
-                  {
-                    title: "Emergency department",
-                    description: "Review current department capacity.",
-                    icon: Hospital,
-                  },
-                  {
-                    title: "Patient handover",
-                    description: "Verify patient details and handover records.",
-                    icon: ClipboardList,
-                  },
-                ].map((item) => {
-                  const Icon = item.icon;
-
-                  return (
-                    <div key={item.title} className="flex items-start gap-3">
-                      <div className="rounded-xl bg-cyan-500/10 p-2.5 text-cyan-300">
-                        <Icon size={18} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-200">
-                          {item.title}
-                        </p>
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          {item.description}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="mt-5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-                <div className="flex gap-2.5">
-                  <ShieldCheck
-                    size={18}
-                    className="mt-0.5 shrink-0 text-amber-300"
-                  />
-                  <p className="text-xs leading-5 text-slate-400">
-                    Sample readiness indicators are not a substitute for
-                    verified clinical staffing, equipment or bed-management
-                    systems.
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            <section className={`${panel} p-5 sm:p-6`}>
-              <SectionHeading
-                icon={Activity}
-                title="Hospital Activity"
-                subtitle="Recent status changes in this session."
-              />
-
-              <div className="space-y-3">
-                {cases
-                  .filter(
-                    (item) =>
-                      item.status === "Completed" ||
-                      item.status === "Ready for Handover"
-                  )
-                  .map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-start gap-3"
-                    >
-                      <CheckCircle2
-                        size={19}
-                        className="mt-0.5 text-emerald-300"
-                      />
-                      <div>
-                        <p className="text-sm text-slate-200">
-                          {item.emergency}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {item.id} · {item.status}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-
-                {cases.every(
-                  (item) =>
-                    item.status !== "Completed" &&
-                    item.status !== "Ready for Handover"
-                ) && (
-                  <p className="py-4 text-center text-sm text-slate-500">
-                    No completed handovers yet.
-                  </p>
-                )}
-              </div>
-            </section>
-          </div>
-        </div>
-
-        <footer className="mt-8 border-t border-slate-800 py-6 text-xs text-slate-500">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row">
-            <p>
-              © {new Date().getFullYear()} Astralife AI · Hospital Prototype
-            </p>
-            <a href="/" className="hover:text-white">
-              Back to home
-            </a>
-          </div>
-        </footer>
-      </main>
-
-      {notification && (
-        <div
-          role="status"
-          className="fixed bottom-5 right-5 z-50 flex max-w-sm items-start gap-3 rounded-2xl border border-emerald-500/30 bg-slate-900 p-4 shadow-2xl"
-        >
-          <CheckCircle2
-            size={19}
-            className="mt-0.5 shrink-0 text-emerald-300"
+        {/* Hospital details */}
+        <section className="mb-8 rounded-2xl border border-slate-800 bg-[#0c1929] p-5 sm:p-6">
+          <SectionTitle
+            icon={Building2}
+            title="Hospital Details"
+            subtitle="Registered hospital information"
           />
-          <p className="text-sm text-slate-200">{notification}</p>
-          <button
-            type="button"
-            onClick={() => setNotification("")}
-            aria-label="Dismiss notification"
-            className="text-slate-500 hover:text-white"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
+
+          {hospital ? (
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                [
+                  "Hospital Name",
+                  hospital.name || hospital.hospitalName,
+                ],
+                ["Address", hospital.address || hospital.city],
+                [
+                  "Contact Number",
+                  hospital.phone ||
+                    hospital.contact ||
+                    hospital.contactNumber,
+                ],
+                ["Email", hospital.email],
+                ["Hospital ID", hospital.id],
+                [
+                  "Registration Number",
+                  hospital.registrationNumber ||
+                    hospital.registrationId,
+                ],
+              ].map(([label, value]) => (
+                <div
+                  key={label}
+                  className="rounded-xl border border-slate-800 bg-slate-900/40 p-4"
+                >
+                  <p className="text-xs text-slate-500">{label}</p>
+                  <p className="mt-2 break-words text-sm font-medium text-white">
+                    {value || "Not available"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 text-sm text-amber-300">
+              Hospital details are unavailable. Check that the logged-in
+              staff document contains a valid hospitalId.
+            </p>
+          )}
+        </section>
+
+        {/* Other active emergencies */}
+        <section className="mb-8">
+          <SectionTitle
+            icon={Activity}
+            title="Assigned Emergencies"
+            subtitle="Emergency cases currently associated with this hospital"
+          />
+
+          {emergencies.length > 0 ? (
+            <div className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0c1929]">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[650px] text-left text-sm">
+                  <thead className="border-b border-slate-800 bg-slate-900/60 text-xs uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th className="px-5 py-4">Emergency ID</th>
+                      <th className="px-5 py-4">Reported</th>
+                      <th className="px-5 py-4">Ambulance</th>
+                      <th className="px-5 py-4">Status</th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-800">
+                    {emergencies.map((item) => (
+                      <tr
+                        key={item.id}
+                        className="transition hover:bg-slate-800/30"
+                      >
+                        <td className="px-5 py-4 font-mono text-xs text-cyan-300">
+                          {item.id}
+                        </td>
+
+                        <td className="px-5 py-4 text-slate-300">
+                          {formatDate(
+                            item.createdAt ||
+                              item.reportedAt ||
+                              item.timestamp
+                          )}
+                        </td>
+
+                        <td className="px-5 py-4 text-slate-300">
+                          {item.ambulanceId ||
+                            item.ambulanceID ||
+                            "Not assigned"}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-300">
+                            {item.Status || item.status || "Unknown"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-800 bg-[#0c1929] p-8 text-center">
+              <p className="text-sm text-slate-400">
+                No emergency cases are currently assigned to this hospital.
+              </p>
+            </div>
+          )}
+        </section>
+
+        <footer className="border-t border-slate-800 py-5 text-center text-xs text-slate-600">
+          Astralife AI · Hospital Emergency Coordination
+        </footer>
+      </div>
     </div>
   );
 }

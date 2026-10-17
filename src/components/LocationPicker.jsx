@@ -1,14 +1,20 @@
 import { useEffect } from "react";
-import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  useMap,
+  useMapEvents,
+} from "react-leaflet";
+
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-
-// Fix Leaflet marker icons in Vite
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
+// Fix Leaflet marker icons in Vite
 const defaultMarkerIcon = L.icon({
   iconUrl: markerIcon,
   iconRetinaUrl: markerIcon2x,
@@ -20,6 +26,20 @@ const defaultMarkerIcon = L.icon({
 });
 
 L.Marker.prototype.options.icon = defaultMarkerIcon;
+
+const DEFAULT_POSITION = [19.076, 72.8777]; // Mumbai fallback
+
+function isValidLocation(position) {
+  return (
+    position != null &&
+    Number.isFinite(position.latitude) &&
+    Number.isFinite(position.longitude) &&
+    position.latitude >= -90 &&
+    position.latitude <= 90 &&
+    position.longitude >= -180 &&
+    position.longitude <= 180
+  );
+}
 
 function MapClickHandler({ onLocationChange }) {
   useMapEvents({
@@ -34,53 +54,47 @@ function MapClickHandler({ onLocationChange }) {
   return null;
 }
 
-function LocationPicker({
+function DraggableMarker({
   position,
+  onLocationChange,
+  shouldCenter,
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (shouldCenter) {
+      map.setView(position, 15);
+    }
+  }, [map, position[0], position[1], shouldCenter]);
+
+  return (
+    <Marker
+      position={position}
+      draggable
+      eventHandlers={{
+        dragend(event) {
+          const location = event.target.getLatLng();
+
+          onLocationChange({
+            latitude: location.lat,
+            longitude: location.lng,
+          });
+        },
+      }}
+    />
+  );
+}
+
+export default function LocationPicker({
+  position = null,
   onLocationChange,
   onConfirm,
 }) {
-  const defaultPosition = [19.076, 72.8777]; // Mumbai fallback
-
-  const latitude = position?.latitude;
-  const longitude = position?.longitude;
-
-  const hasValidPosition =
-    Number.isFinite(latitude) &&
-    Number.isFinite(longitude) &&
-    latitude >= -90 &&
-    latitude <= 90 &&
-    longitude >= -180 &&
-    longitude <= 180;
+  const hasValidPosition = isValidLocation(position);
 
   const currentPosition = hasValidPosition
-    ? [latitude, longitude]
-    : defaultPosition;
-
-  function DraggableMarker() {
-    const map = useMapEvents({});
-
-    useEffect(() => {
-      map.setView(currentPosition, 15);
-    }, [map, latitude, longitude]);
-
-    return (
-      <Marker
-        position={currentPosition}
-        draggable={true}
-        eventHandlers={{
-          dragend(event) {
-            const marker = event.target;
-            const location = marker.getLatLng();
-
-            onLocationChange({
-              latitude: location.lat,
-              longitude: location.lng,
-            });
-          },
-        }}
-      />
-    );
-  }
+    ? [position.latitude, position.longitude]
+    : DEFAULT_POSITION;
 
   return (
     <div className="space-y-4">
@@ -90,16 +104,24 @@ function LocationPicker({
         </h3>
 
         <p className="mt-1 text-sm text-slate-400">
-          Click anywhere on the map or drag the marker to select the
-          correct pickup location.
+          Click the map or drag the marker to select the correct pickup
+          location.
         </p>
       </div>
+
+      {!hasValidPosition && (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+          Pickup location is not set. The map is showing Mumbai as a
+          reference only. Select your actual pickup location before
+          confirming.
+        </p>
+      )}
 
       <div className="overflow-hidden rounded-xl border border-white/10">
         <MapContainer
           center={currentPosition}
           zoom={hasValidPosition ? 15 : 5}
-          scrollWheelZoom={true}
+          scrollWheelZoom
           className="h-80 w-full"
         >
           <TileLayer
@@ -108,7 +130,12 @@ function LocationPicker({
           />
 
           <MapClickHandler onLocationChange={onLocationChange} />
-          <DraggableMarker />
+
+          <DraggableMarker
+            position={currentPosition}
+            onLocationChange={onLocationChange}
+            shouldCenter={hasValidPosition}
+          />
         </MapContainer>
       </div>
 
@@ -116,12 +143,12 @@ function LocationPicker({
         <div className="rounded-lg border border-white/10 bg-slate-900 p-3">
           <p className="text-sm text-slate-300">
             <span className="font-semibold">Latitude:</span>{" "}
-            {latitude.toFixed(6)}
+            {position.latitude.toFixed(6)}
           </p>
 
           <p className="mt-1 text-sm text-slate-300">
             <span className="font-semibold">Longitude:</span>{" "}
-            {longitude.toFixed(6)}
+            {position.longitude.toFixed(6)}
           </p>
         </div>
       )}
@@ -137,5 +164,3 @@ function LocationPicker({
     </div>
   );
 }
-
-export default LocationPicker;

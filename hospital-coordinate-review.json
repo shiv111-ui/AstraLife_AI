@@ -1,0 +1,484 @@
+[
+  {
+    "documentId": "AN-HOSP-001",
+    "hospitalId": "AN-HOSP-001",
+    "name": "Vighnaharta Super Speciality Hospital",
+    "address": "Plot No. 10, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-002",
+    "hospitalId": "AN-HOSP-002",
+    "name": "Kamalnayan Multispeciality Hospital",
+    "address": "Plot No. 11, Tarakpur, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-003",
+    "hospitalId": "AN-HOSP-003",
+    "name": "Wellness Womens Hospital",
+    "address": "Plot No. 12, New Tilak Road, Sakkar Chowk, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-004",
+    "hospitalId": "AN-HOSP-004",
+    "name": "Saideep Healthcare & Research Pvt. Ltd.",
+    "address": "Plot No. 13, Premdan Chowk, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "REVIEW_MATCHES",
+    "candidates": [
+      {
+        "latitude": 19.1084679,
+        "longitude": 74.743339,
+        "mapName": "Saideep Hospital",
+        "displayName": "Saideep Hospital, Ahmednagar Loni Dhanora Road, Ahilyanagar, Nagar Subdistrict, Ahilyanagar District, Maharashtra, 414003, India",
+        "score": 0.8
+      }
+    ]
+  },
+  {
+    "documentId": "AN-HOSP-005",
+    "hospitalId": "AN-HOSP-005",
+    "name": "Crystal Hospital & Research Center",
+    "address": "Plot No. 14, Pipeline Road, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-006",
+    "hospitalId": "AN-HOSP-006",
+    "name": "Satalkar Lotus Superspeciality Hospital",
+    "address": "Plot No. 15, Nagar-Manmad Road, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-007",
+    "hospitalId": "AN-HOSP-007",
+    "name": "Evangelical Mission Hospital",
+    "address": "Plot No. 16, Balikashram Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-008",
+    "hospitalId": "AN-HOSP-008",
+    "name": "Ahmednagar Civil Hospital",
+    "address": "Plot No. 17, Delhi Gate, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "REVIEW_MATCHES",
+    "candidates": [
+      {
+        "latitude": 19.0973987,
+        "longitude": 74.7372966,
+        "mapName": "Old Civil Hospital Ahmednagar",
+        "displayName": "Old Civil Hospital Ahmednagar, Chitale Road, माळीवाडा गणपती, Ahilyanagar, Nagar Subdistrict, Ahilyanagar District, Maharashtra, 414001, India",
+        "score": 0.67
+      }
+    ]
+  },
+  {
+    "documentId": "AN-HOSP-009",
+    "hospitalId": "AN-HOSP-009",
+    "name": "Noble Hospital & Research Center",
+    "address": "Plot No. 18, Station Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-010",
+    "hospitalId": "AN-HOSP-010",
+    "name": "Maxcare Hospital Ahmednagar",
+    "address": "Plot No. 19, Loni Road, Ahilyanagar, Maharashtra - 414002",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-011",
+    "hospitalId": "AN-HOSP-011",
+    "name": "Galaxy Hospital & Critical Care",
+    "address": "Plot No. 20, Kedgaon, Ahilyanagar, Maharashtra - 414005",
+    "existingLocation": null,
+    "status": "REVIEW_MATCHES",
+    "candidates": [
+      {
+        "latitude": 19.1075207,
+        "longitude": 74.7419305,
+        "mapName": "Jeevandeep Hospital & Critical Care Centre",
+        "displayName": "Jeevandeep Hospital & Critical Care Centre, Ahmednagar Loni Dhanora Road, Ahilyanagar, Nagar Subdistrict, Ahilyanagar District, Maharashtra, 414001, India",
+        "score": 0.6
+      }
+    ]
+  },
+  {
+    "documentId": "AN-HOSP-012",
+    "hospitalId": "AN-HOSP-012",
+    "name": "Sanjivani Multispeciality Hospital",
+    "address": "Plot No. 21, Miri Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-013",
+    "hospitalId": "AN-HOSP-013",
+    "name": "Shree Anand Hospital",
+    "address": "Plot No. 22, Nalegaon, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-014",
+    "hospitalId": "AN-HOSP-014",
+    "name": "Apex Hospital & Trauma Center",
+    "address": "Plot No. 23, Bhingar, Ahilyanagar, Maharashtra - 414002",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-015",
+    "hospitalId": "AN-HOSP-015",
+    "name": "Lifeline Hospital Savedi",
+    "address": "Plot No. 24, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-016",
+    "hospitalId": "AN-HOSP-016",
+    "name": "Anandrishiji Hospital & Medical Research Centre",
+    "address": "Plot No. 25, Tarakpur, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-017",
+    "hospitalId": "AN-HOSP-017",
+    "name": "Sai Hospital & ICU",
+    "address": "Plot No. 26, New Tilak Road, Sakkar Chowk, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-018",
+    "hospitalId": "AN-HOSP-018",
+    "name": "Spandan Critical Care Hospital",
+    "address": "Plot No. 27, Premdan Chowk, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-019",
+    "hospitalId": "AN-HOSP-019",
+    "name": "Chaitanya Hospital & Nursing Home",
+    "address": "Plot No. 28, Pipeline Road, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-020",
+    "hospitalId": "AN-HOSP-020",
+    "name": "Deokar Hospital",
+    "address": "Plot No. 29, Nagar-Manmad Road, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-021",
+    "hospitalId": "AN-HOSP-021",
+    "name": "Hardikar Hospital",
+    "address": "Plot No. 30, Balikashram Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-022",
+    "hospitalId": "AN-HOSP-022",
+    "name": "Pratima Multispeciality Hospital",
+    "address": "Plot No. 31, Delhi Gate, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-023",
+    "hospitalId": "AN-HOSP-023",
+    "name": "Deshmukh Hospital",
+    "address": "Plot No. 32, Station Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-024",
+    "hospitalId": "AN-HOSP-024",
+    "name": "Aditya Hospital",
+    "address": "Plot No. 33, Loni Road, Ahilyanagar, Maharashtra - 414002",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-025",
+    "hospitalId": "AN-HOSP-025",
+    "name": "Suryaveda Hospital",
+    "address": "Plot No. 34, Kedgaon, Ahilyanagar, Maharashtra - 414005",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-026",
+    "hospitalId": "AN-HOSP-026",
+    "name": "Pulse Critical Care Hospital",
+    "address": "Plot No. 35, Miri Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-027",
+    "hospitalId": "AN-HOSP-027",
+    "name": "Niramay Hospital",
+    "address": "Plot No. 36, Nalegaon, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-028",
+    "hospitalId": "AN-HOSP-028",
+    "name": "Icon Hospital Ahmednagar",
+    "address": "Plot No. 37, Bhingar, Ahilyanagar, Maharashtra - 414002",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-029",
+    "hospitalId": "AN-HOSP-029",
+    "name": "Om Hospital & Trauma Center",
+    "address": "Plot No. 38, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-030",
+    "hospitalId": "AN-HOSP-030",
+    "name": "Patel Hospital & Surgical Home",
+    "address": "Plot No. 39, Tarakpur, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-031",
+    "hospitalId": "AN-HOSP-031",
+    "name": "Siddharth Hospital",
+    "address": "Plot No. 40, New Tilak Road, Sakkar Chowk, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-032",
+    "hospitalId": "AN-HOSP-032",
+    "name": "Mauli Hospital & ICU",
+    "address": "Plot No. 41, Premdan Chowk, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-033",
+    "hospitalId": "AN-HOSP-033",
+    "name": "Kulkarni Hospital",
+    "address": "Plot No. 42, Pipeline Road, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-034",
+    "hospitalId": "AN-HOSP-034",
+    "name": "Pawar Hospital",
+    "address": "Plot No. 43, Nagar-Manmad Road, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-035",
+    "hospitalId": "AN-HOSP-035",
+    "name": "Gaikwad Hospital",
+    "address": "Plot No. 44, Balikashram Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-036",
+    "hospitalId": "AN-HOSP-036",
+    "name": "Saraswati Hospital",
+    "address": "Plot No. 45, Delhi Gate, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-037",
+    "hospitalId": "AN-HOSP-037",
+    "name": "City Hospital Ahmednagar",
+    "address": "Plot No. 46, Station Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-038",
+    "hospitalId": "AN-HOSP-038",
+    "name": "Metro Hospital & Trauma Centre",
+    "address": "Plot No. 47, Loni Road, Ahilyanagar, Maharashtra - 414002",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-039",
+    "hospitalId": "AN-HOSP-039",
+    "name": "Care Hospital Savedi",
+    "address": "Plot No. 48, Kedgaon, Ahilyanagar, Maharashtra - 414005",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-040",
+    "hospitalId": "AN-HOSP-040",
+    "name": "Ruby Hospital & ICU",
+    "address": "Plot No. 49, Miri Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-041",
+    "hospitalId": "AN-HOSP-041",
+    "name": "Navjeevan Hospital",
+    "address": "Plot No. 50, Nalegaon, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-042",
+    "hospitalId": "AN-HOSP-042",
+    "name": "Dhanwantari Hospital",
+    "address": "Plot No. 51, Bhingar, Ahilyanagar, Maharashtra - 414002",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-043",
+    "hospitalId": "AN-HOSP-043",
+    "name": "Gurukrupa Hospital",
+    "address": "Plot No. 52, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-044",
+    "hospitalId": "AN-HOSP-044",
+    "name": "Shree Samarth Hospital",
+    "address": "Plot No. 53, Tarakpur, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-045",
+    "hospitalId": "AN-HOSP-045",
+    "name": "Arogya Hospital",
+    "address": "Plot No. 54, New Tilak Road, Sakkar Chowk, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-046",
+    "hospitalId": "AN-HOSP-046",
+    "name": "Ayush Hospital & Critical Care",
+    "address": "Plot No. 55, Premdan Chowk, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "REVIEW_MATCHES",
+    "candidates": [
+      {
+        "latitude": 19.1075207,
+        "longitude": 74.7419305,
+        "mapName": "Jeevandeep Hospital & Critical Care Centre",
+        "displayName": "Jeevandeep Hospital & Critical Care Centre, Ahmednagar Loni Dhanora Road, Ahilyanagar, Nagar Subdistrict, Ahilyanagar District, Maharashtra, 414001, India",
+        "score": 0.6
+      }
+    ]
+  },
+  {
+    "documentId": "AN-HOSP-047",
+    "hospitalId": "AN-HOSP-047",
+    "name": "Prime Hospital Ahmednagar",
+    "address": "Plot No. 56, Pipeline Road, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-048",
+    "hospitalId": "AN-HOSP-048",
+    "name": "Global Hospital & ICU",
+    "address": "Plot No. 57, Nagar-Manmad Road, Savedi, Ahilyanagar, Maharashtra - 414003",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-049",
+    "hospitalId": "AN-HOSP-049",
+    "name": "Morya Hospital",
+    "address": "Plot No. 58, Balikashram Road, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  },
+  {
+    "documentId": "AN-HOSP-050",
+    "hospitalId": "AN-HOSP-050",
+    "name": "Horizon Multispeciality Hospital",
+    "address": "Plot No. 59, Delhi Gate, Ahilyanagar, Maharashtra - 414001",
+    "existingLocation": null,
+    "status": "NO_MATCH",
+    "candidates": []
+  }
+]

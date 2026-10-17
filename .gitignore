@@ -31,3 +31,5 @@ dist-ssr
 # Local database files
 *.sqlite
 *.sqlite3
+
+serviceAccountKey.json
