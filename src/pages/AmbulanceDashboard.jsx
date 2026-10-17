@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { auth, db } from "../assets/firebase";
 import { getRoute } from "../api/routing.js";
+import { completeEmergency, updateEmergencyStatus } from "../api/dispatch.js";
 
 const STATUS_STYLES = {
   Pending: "bg-slate-800 text-slate-300",
@@ -160,9 +161,13 @@ export default function AmbulanceDashboard() {
     if (!staff?.ambulanceId) return undefined;
     setLoadingMissions(true);
     setDataError("");
+    const ownVehicle = query(
+      collection(db, "Ambulances"),
+      where("ambulance_id", "==", staff.ambulanceId)
+    );
     const stopVehicle = onSnapshot(
-      doc(db, "Ambulances", staff.ambulanceId),
-      (snap) => setAmbulance(snap.exists() ? snap.data() : null),
+      ownVehicle,
+      (snapshot) => setAmbulance(snapshot.docs[0]?.data() || null),
       (error) => console.error("Ambulance record read failed:", error)
     );
     const assigned = query(
@@ -340,6 +345,24 @@ export default function AmbulanceDashboard() {
     catch (error) { console.error("Logout failed:", error); }
   };
 
+  const updateMissionStatus = async (mission, nextStatus) => {
+    if (!mission || !staff?.ambulanceId) return;
+    try {
+      if (nextStatus === "Completed") {
+        const result = await completeEmergency(mission.id, staff.ambulanceId);
+        if (!result.success) throw new Error(result.message || "Could not complete this mission.");
+        setDataError("");
+        return;
+      }
+      const result = await updateEmergencyStatus(mission.id, staff.ambulanceId, nextStatus);
+      if (!result.success) throw new Error(result.message || "Could not update this mission status.");
+      setDataError("");
+    } catch (error) {
+      console.error("Mission status update failed:", error);
+      setDataError(error.code === "permission-denied" ? "Firestore rules denied this status update. Only the assigned ambulance account should be allowed to update this mission." : error.message || "Could not update mission status.");
+    }
+  };
+
   if (authLoading) return <div className="grid min-h-screen place-items-center bg-slate-950 text-slate-400"><div className="flex items-center gap-3"><RefreshCw className="animate-spin" /> Loading ambulance dashboard…</div></div>;
   if (authError) return <main className="grid min-h-screen place-items-center bg-slate-950 p-6"><section className={`${panel} max-w-lg p-8 text-center`}><AlertCircle className="mx-auto text-red-600" size={38} /><h1 className="mt-4 text-xl font-bold text-slate-100">Ambulance access unavailable</h1><p className="mt-2 text-sm text-slate-400">{authError}</p><button onClick={() => navigate("/login")} className="mt-6 rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white">Back to login</button></section></main>;
 
@@ -386,6 +409,11 @@ export default function AmbulanceDashboard() {
                   <Field icon={MapPin} label="Incident location" value={selectedMission.address} />
                   <Field icon={Hospital} label="Assigned hospital" value={selectedMission.hospitalId || "Awaiting assignment"} />
                 </div>
+                <div className="mt-5 flex flex-wrap gap-2" aria-label="Emergency status actions">
+                  {["Accepted", "En Route", "At Scene", "Transporting", "At Hospital", "Completed"].map((status) => (
+                    <button key={status} type="button" disabled={selectedMission.status === status || ["Completed", "Rejected", "Cancelled", "Canceled"].includes(selectedMission.status)} onClick={() => updateMissionStatus(selectedMission, status)} className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">{status}</button>
+                  ))}
+                </div>
                 {selectedMission.description && <div className="mt-5 rounded-xl bg-slate-950 p-4"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Additional details</p><p className="mt-2 text-sm leading-6 text-slate-300">{selectedMission.description}</p></div>}
               </section>
 
@@ -410,7 +438,7 @@ export default function AmbulanceDashboard() {
                 <Field icon={Phone} label="Contact" value={ambulance?.phone || ambulance?.contactNumber || staff.phone} />
                 <Field icon={Wifi} label="Location sharing" value={gps ? "Receiving location updates" : "Waiting for GPS integration"} />
               </div>
-              <p className="mt-5 flex items-start gap-2 rounded-xl bg-slate-950 p-3 text-xs leading-5 text-slate-400"><ShieldCheck className="mt-0.5 shrink-0" size={15} />This dashboard reads assignment and GPS data. It does not change mission status or ambulance assignments, so it does not depend on the broken Accept-button update.</p>
+              <p className="mt-5 flex items-start gap-2 rounded-xl bg-slate-950 p-3 text-xs leading-5 text-slate-400"><ShieldCheck className="mt-0.5 shrink-0" size={15} />Mission updates verify that this ambulance is still the assigned resource before writing.</p>
             </section>
           </div>
         </section>

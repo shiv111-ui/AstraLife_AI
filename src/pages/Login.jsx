@@ -101,16 +101,6 @@ function Login() {
       const staffRef = doc(db, "Staff", signedInUser.uid);
       const staffSnapshot = await getDoc(staffRef);
 
-      console.log("Authenticated UID:", signedInUser.uid);
-      console.log("Authenticated email:", signedInUser.email);
-      console.log("Staff document path:", staffRef.path);
-      console.log("Staff document exists:", staffSnapshot.exists());
-      console.log("Firebase project ID:", db.app.options.projectId);
-
-      if (staffSnapshot.exists()) {
-        console.log("Staff document data:", staffSnapshot.data());
-      }
-
       // Step 3: Reject accounts without an authorized staff record.
       if (!staffSnapshot.exists()) {
         await signOut(auth);

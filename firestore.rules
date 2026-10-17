@@ -1,0 +1,116 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function staff() {
+      return signedIn() && exists(/databases/$(database)/documents/Staff/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/Staff/$(request.auth.uid)).data
+        : null;
+    }
+
+    function activeRole(role) {
+      return signedIn() && staff() != null && staff().active == true && staff().role == role;
+    }
+
+    function ownsAmbulance(ambulanceId) {
+      return activeRole('ambulance') && staff().ambulanceId == ambulanceId;
+    }
+
+    function ownsHospital(hospitalId) {
+      return activeRole('hospital') && staff().hospitalId == hospitalId;
+    }
+
+    function controlRoom() {
+      return activeRole('control-room');
+    }
+
+    function assignedCaseForAmbulance(data) {
+      return activeRole('ambulance') && data.ambulanceId == staff().ambulanceId;
+    }
+
+    function assignedCaseForHospital(data) {
+      return activeRole('hospital') && data.hospitalId == staff().hospitalId;
+    }
+
+    match /Staff/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    match /Emergency_Cases/{caseId} {
+      // Patient identity is assigned by the trusted callable from Firebase Auth.
+      allow get: if signedIn() && (
+        resource.data.patientUid == request.auth.uid ||
+        controlRoom() ||
+        assignedCaseForAmbulance(resource.data) ||
+        assignedCaseForHospital(resource.data)
+      );
+      allow list: if controlRoom() ||
+        (activeRole('ambulance') && resource.data.ambulanceId == staff().ambulanceId) ||
+        (activeRole('hospital') && resource.data.hospitalId == staff().hospitalId);
+      allow create: if controlRoom() &&
+        request.resource.data.keys().hasOnly(['emergencyType', 'EmergencyType', 'Priority', 'Status', 'description', 'location', 'ambulanceId', 'hospitalId', 'createdAt', 'updatedAt', 'source']) &&
+        request.resource.data.source == 'control-room-demo' &&
+        request.resource.data.Status == 'Pending' &&
+        request.resource.data.ambulanceId == null &&
+        request.resource.data.hospitalId == null;
+      allow delete: if false;
+      allow update: if (
+        signedIn() && resource.data.patientUid == request.auth.uid &&
+        resource.data.ambulanceId == null &&
+        resource.data.Status in ['Pending', 'Awaiting Ambulance', 'Awaiting Hospital'] &&
+        request.resource.data.patientUid == resource.data.patientUid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['EmergencyType', 'updatedAt']) &&
+        request.resource.data.EmergencyType in ['Medical Emergency', 'Road Accident', 'Cardiac Emergency', 'Breathing Difficulty', 'Pregnancy Emergency', 'Fire Emergency', null]
+      ) || (
+        controlRoom() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Status', 'updatedAt', 'description', 'Priority']) &&
+        request.resource.data.Status in ['Pending', 'Ambulance Assigned', 'Accepted', 'En Route', 'At Scene', 'Transporting', 'At Hospital', 'Patient Onboard', 'Awaiting Ambulance', 'Awaiting Hospital']
+      );
+    }
+
+    match /Ambulances/{ambulanceDocId} {
+      allow get: if controlRoom() || (activeRole('ambulance') && resource.data.ambulance_id == staff().ambulanceId);
+      allow list: if controlRoom() || (activeRole('ambulance') && resource.data.ambulance_id == staff().ambulanceId);
+      allow create, delete: if false;
+      allow update: if false;
+    }
+
+    match /Hospitals/{hospitalDocId} {
+      allow get: if controlRoom() ||
+        (activeRole('hospital') && resource.data.hospital_id == staff().hospitalId) ||
+        activeRole('ambulance');
+      allow list: if controlRoom() || activeRole('ambulance');
+      allow create, delete: if false;
+      allow update: if ownsHospital(resource.data.hospital_id) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bed_availability', 'updatedAt']) &&
+        request.resource.data.bed_availability.diff(resource.data.bed_availability).affectedKeys().hasOnly(['vacant_beds', 'general_ward_beds', 'icu_beds']) &&
+        request.resource.data.bed_availability.total_beds == resource.data.bed_availability.total_beds &&
+        request.resource.data.bed_availability.vacant_beds is int &&
+        request.resource.data.bed_availability.vacant_beds >= 0 &&
+        request.resource.data.bed_availability.vacant_beds <= resource.data.bed_availability.total_beds &&
+        request.resource.data.bed_availability.general_ward_beds.total == resource.data.bed_availability.general_ward_beds.total &&
+        request.resource.data.bed_availability.general_ward_beds.vacant is int &&
+        request.resource.data.bed_availability.general_ward_beds.vacant >= 0 &&
+        request.resource.data.bed_availability.general_ward_beds.vacant <= resource.data.bed_availability.general_ward_beds.total &&
+        request.resource.data.bed_availability.icu_beds.total == resource.data.bed_availability.icu_beds.total &&
+        request.resource.data.bed_availability.icu_beds.vacant is int &&
+        request.resource.data.bed_availability.icu_beds.vacant >= 0 &&
+        request.resource.data.bed_availability.icu_beds.vacant <= resource.data.bed_availability.icu_beds.total;
+    }
+
+    match /Ambulance_Locations/{locationDocId} {
+      allow get, list: if controlRoom() || ownsAmbulance(resource.data.ambulanceId);
+      allow create, update: if ownsAmbulance(request.resource.data.ambulanceId) &&
+        locationDocId == staff().ambulanceId;
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

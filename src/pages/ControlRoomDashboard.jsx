@@ -10,9 +10,8 @@ import {
   query,
   serverTimestamp,
   updateDoc,
-  writeBatch,
 } from "firebase/firestore";
-import { dispatch as autoDispatch } from "../api/dispatch";
+import { assignResources, completeEmergency, dispatch as autoDispatch } from "../api/dispatch";
 import { useNavigate } from "react-router-dom";
 
 import { auth, db } from "../assets/firebase";
@@ -106,12 +105,6 @@ const PRIMARY_BUTTON =
 
 const SECONDARY_BUTTON =
   "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40";
-
-const HOSPITAL_FALLBACKS = [
-  "City General Hospital",
-  "Central Medical Centre",
-  "District Emergency Hospital",
-];
 
 /* -------------------------------------------------------
    HELPERS
@@ -428,6 +421,7 @@ export default function ControlRoomDashboard() {
               data.ambulanceID ||
               "Unassigned",
 
+
             hospital:
               data.hospitalId ||
               data.hospitalID ||
@@ -607,31 +601,17 @@ export default function ControlRoomDashboard() {
     (item) =>
       ["Available", "available", "ONLINE", "Online"].includes(item.status)
   );
+  const selectedAmbulanceId = availableAmbulances.some(
+    (item) => item.id === assignmentAmbulance
+  ) ? assignmentAmbulance : availableAmbulances[0]?.id || "";
+  const selectedHospitalId = hospitals.some(
+    (item) => item.id === assignmentHospital
+  ) ? assignmentHospital : hospitals[0]?.id || "";
 
   const assignedCount = ambulances.filter(
     (item) =>
       !["Available", "available", "ONLINE", "Online"].includes(item.status)
   ).length;
-
-  useEffect(() => {
-    if (
-      !assignmentAmbulance ||
-      !availableAmbulances.some(
-        (item) => item.id === assignmentAmbulance
-      )
-    ) {
-      setAssignmentAmbulance(availableAmbulances[0]?.id || "");
-    }
-  }, [availableAmbulances, assignmentAmbulance]);
-
-  useEffect(() => {
-    if (
-      !assignmentHospital ||
-      !hospitals.some((item) => item.id === assignmentHospital)
-    ) {
-      setAssignmentHospital(hospitals[0]?.id || "");
-    }
-  }, [hospitals, assignmentHospital]);
 
   /* -----------------------------------------------------
      LOGOUT
@@ -665,11 +645,11 @@ export default function ControlRoomDashboard() {
     }
 
     const vehicle = ambulances.find(
-      (item) => item.id === assignmentAmbulance
+      (item) => item.id === selectedAmbulanceId
     );
 
     const hospital = hospitals.find(
-      (item) => item.id === assignmentHospital
+      (item) => item.id === selectedHospitalId
     );
 
     if (!vehicle) {
@@ -694,37 +674,11 @@ export default function ControlRoomDashboard() {
     setSaving(true);
 
     try {
-      const batch = writeBatch(db);
-
-      const emergencyRef = doc(
-        db,
-        "Emergency_Cases",
-        selectedIncident.id
-      );
-
-      batch.update(emergencyRef, {
-        ambulanceId: vehicle.id,
-        hospitalId: hospital.id,
-        Status: "Assigned",
-        updatedAt: serverTimestamp(),
-      });
-
-      /*
-       * We use the actual ambulance document ID, which may differ
-       * from the ambulance_id stored inside the document.
-       */
-      const ambulanceRef = doc(
-        db,
-        "Ambulances",
-        vehicle.documentId
-      );
-
-      batch.update(ambulanceRef, {
-        current_status: "Assigned",
-        updatedAt: serverTimestamp(),
-      });
-
-      await batch.commit();
+      const result = await assignResources(selectedIncident.id, vehicle.documentId, hospital.id);
+      if (!result.success) {
+        notify(result.message || "Assignment could not be reserved.");
+        return;
+      }
 
       setCorridorIncidentId(selectedIncident.id);
       setCorridorStatus("Not Requested");
@@ -759,49 +713,17 @@ export default function ControlRoomDashboard() {
     setSaving(true);
 
     try {
-      await updateDoc(
-        doc(db, "Emergency_Cases", selectedIncident.id),
-        {
+      if (["Completed", "Cancelled", "Rejected"].includes(status)) {
+        const result = await completeEmergency(selectedIncident.id, null, status);
+        if (!result.success) {
+          notify(result.message || "Could not close this emergency.");
+          return;
+        }
+      } else {
+        await updateDoc(doc(db, "Emergency_Cases", selectedIncident.id), {
           Status: status,
           updatedAt: serverTimestamp(),
-        }
-      );
-
-      /*
-       * The Emergency_Cases listener refreshes the UI automatically.
-       * Ambulance availability is updated separately when completed.
-       */
-      if (
-        status === "Completed" &&
-        selectedIncident.ambulance &&
-        selectedIncident.ambulance !== "Unassigned"
-      ) {
-        const vehicle = ambulances.find(
-          (item) => item.id === selectedIncident.ambulance
-        );
-
-        if (vehicle) {
-          try {
-            await updateDoc(
-              doc(db, "Ambulances", vehicle.documentId),
-              {
-                current_status: "Available",
-                updatedAt: serverTimestamp(),
-              }
-            );
-          } catch (ambulanceError) {
-            console.error(
-              "Could not release ambulance:",
-              ambulanceError
-            );
-
-            notify(
-              "Emergency completed, but ambulance availability could not be updated."
-            );
-
-            return;
-          }
-        }
+        });
       }
 
       notify(`Emergency status updated to "${status}".`);
@@ -1068,7 +990,7 @@ export default function ControlRoomDashboard() {
             icon={Ambulance}
             label="Available Ambulances"
             value={availableAmbulances.length}
-            description="Vehicles marked available in Firebase"
+            description="Reported available status from Firestore; confirm before dispatch"
             color="cyan"
           />
 
@@ -1118,7 +1040,7 @@ export default function ControlRoomDashboard() {
             subtitle="Selected patient's GPS location and assigned ambulance coordinates"
           />
 
-          <div className="mb-4 grid gap-3 sm:grid-cols-3">
+          <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
               <p className="text-xs text-slate-500">Selected emergency</p>
               <p className="mt-1 font-semibold text-white">
@@ -1143,6 +1065,7 @@ export default function ControlRoomDashboard() {
                   : "Unavailable"}
               </p>
             </div>
+
           </div>
 
           <GreenCorridorMap
@@ -1498,7 +1421,7 @@ export default function ControlRoomDashboard() {
 
                   <select
                     id="ambulance-select"
-                    value={assignmentAmbulance}
+                    value={selectedAmbulanceId}
                     onChange={(event) =>
                       setAssignmentAmbulance(event.target.value)
                     }
@@ -1525,7 +1448,7 @@ export default function ControlRoomDashboard() {
 
                   <select
                     id="hospital-select"
-                    value={assignmentHospital}
+                    value={selectedHospitalId}
                     onChange={(event) =>
                       setAssignmentHospital(event.target.value)
                     }
@@ -1560,8 +1483,8 @@ export default function ControlRoomDashboard() {
                   disabled={
                     saving ||
                     !selectedIncident ||
-                    !assignmentAmbulance ||
-                    !assignmentHospital ||
+                    !selectedAmbulanceId ||
+                    !selectedHospitalId ||
                     selectedIncident.status === "Completed" ||
                     selectedIncident.status === "Rejected"
                   }
@@ -1606,7 +1529,7 @@ export default function ControlRoomDashboard() {
                       } else if (result.reason === "no_ambulance") {
                         notify("No available ambulances found. Emergency marked Awaiting Ambulance.");
                       } else if (result.reason === "no_hospital") {
-                        notify(`Ambulance ${result.ambulanceId} assigned, but no hospital found. Assign manually.`);
+                        notify("No nearby hospital has verified coordinates and suitable available capacity. Assign a hospital manually.");
                       } else {
                         notify(`Auto-dispatch failed: ${result.message}`);
                       }
@@ -1641,7 +1564,7 @@ export default function ControlRoomDashboard() {
               <Heading
                 icon={Radio}
                 title="Fleet Status"
-                subtitle="Ambulance availability from Firestore."
+                subtitle="Reported Firestore status; confirm operational readiness before dispatch."
                 action={
                   <span className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs text-slate-300">
                     {ambulances.length} units

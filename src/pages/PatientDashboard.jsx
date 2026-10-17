@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  addDoc,
-  collection,
-  doc,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from "firebase/firestore";
+import { doc, onSnapshot, runTransaction, serverTimestamp } from "firebase/firestore";
 
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
@@ -25,10 +16,10 @@ import {
   Truck,
 } from "lucide-react";
 
-import { db } from "../assets/firebase";
+import { auth, db } from "../assets/firebase";
 import GreenCorridorMap from "./GreenCorridorMap";
 import VoiceSOSButton from "../components/VoiceSOSButton";
-import { dispatch } from "../api/dispatch";
+import { submitPatientSOS } from "../api/dispatch";
 import { calculateETA } from "../api/eta";
 
 const EMERGENCY_TYPES = [
@@ -81,6 +72,22 @@ function getErrorMessage(error) {
   return error?.message || "An unexpected error occurred.";
 }
 
+function logSosFailure(operation, error) {
+  console.error("SOS submission operation failed", {
+    operation,
+    code: error?.code || "unknown",
+    errorName: error?.name || "Error",
+    authenticated: Boolean(auth.currentUser),
+  });
+}
+
+function getSosErrorMessage(operation, error) {
+  if (error?.code === "permission-denied") {
+    return `Firebase denied ${operation}. Confirm anonymous Firebase Authentication and the trusted SOS function configuration.`;
+  }
+  return getErrorMessage(error);
+}
+
 function formatETA(etaData) {
   if (!etaData) return null;
   const { durationMinutes, arrivalTime, distanceKm, isLive, isStale, source } =
@@ -110,6 +117,7 @@ function formatETA(etaData) {
 export default function PatientDashboard() {
   const location = useLocation();
   const navigate = useNavigate();
+  const initialEmergencyType = location.state?.emergencyType || null;
 
   const [pageStatus, setPageStatus] = useState("idle");
   const [error, setError] = useState("");
@@ -118,22 +126,15 @@ export default function PatientDashboard() {
 
   const [emergency, setEmergency] = useState(null);
   const [patientLocation, setPatientLocation] = useState(null);
-  const [ambulanceLocation, setAmbulanceLocation] = useState(null);
-  const [hospitals, setHospitals] = useState([]);
-
-  const [gpsUpdatedAt, setGpsUpdatedAt] = useState(null);
-  const [gpsError, setGpsError] = useState("");
 
   const [emergencyType, setEmergencyType] = useState("");
   const [savingType, setSavingType] = useState(false);
   const [typeMessage, setTypeMessage] = useState("");
 
   const [eta, setEta] = useState(null);
-  const etaCalcRef = useRef(false);
-
   const submissionStarted = useRef(false);
-  const activeEmergencyId = useRef(null);
   const dispatchAttempted = useRef(false);
+  const requestId = useRef(null);
 
   const shouldStartSOS = location.state?.startSOS === true;
 
@@ -174,38 +175,33 @@ export default function PatientDashboard() {
         setPatientLocation(capturedLocation);
         setPageStatus("sending");
 
+        let operation = "submit SOS to trusted backend";
         try {
-          const emergencyData = {
-            EmergencyType: null,
-            Priority: null,
-            Status: "Pending",
-            location: capturedLocation,
-            ambulanceId: null,
-            hospitalId: null,
-            victimCount: 1,
-            description: null,
-            source: "patient-sos",
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          };
-
-          const emergencyRef = await addDoc(
-            collection(db, "Emergency_Cases"),
-            emergencyData
-          );
-
-          activeEmergencyId.current = emergencyRef.id;
-
-          setEmergency({
-            id: emergencyRef.id,
-            ...emergencyData,
+          if (!requestId.current) requestId.current = crypto.randomUUID();
+          const submission = await submitPatientSOS({
+            requestId: requestId.current,
+            emergencyType: initialEmergencyType || "Medical Emergency",
+            location: { latitude, longitude, accuracy },
           });
+          if (!submission?.emergencyId) throw new Error(submission?.message || "The trusted SOS service did not return an emergency reference.");
+          const emergencyId = submission.emergencyId;
+          setEmergency({
+            id: emergencyId,
+            EmergencyType: initialEmergencyType || "Medical Emergency",
+            Priority: null,
+            Status: submission.assigned ? "Ambulance Assigned" : submission.reason === "no_hospital" ? "Awaiting Hospital" : submission.reason === "no_ambulance" ? "Awaiting Ambulance" : "Pending",
+            location: capturedLocation,
+            ambulanceId: submission.ambulanceId || null,
+            hospitalId: submission.hospitalId || null,
+            dispatchEta: submission.dispatchEta || null,
+          });
+          setEmergencyType(initialEmergencyType || "Medical Emergency");
 
           setPageStatus("tracking");
 
           navigate("/patient", {
             replace: true,
-            state: { emergencyId: emergencyRef.id },
+            state: { emergencyId },
           });
 
           /* ---- Auto-dispatch after writing the emergency ---- */
@@ -215,10 +211,8 @@ export default function PatientDashboard() {
             setDispatchMessage("Finding the nearest available ambulance…");
 
             try {
-              const result = await dispatch(emergencyRef.id, {
-                latitude,
-                longitude,
-              });
+              operation = "dispatch resource reads and reservation";
+              const result = submission;
 
               if (result.success) {
                 setDispatchStatus("assigned");
@@ -228,7 +222,7 @@ export default function PatientDashboard() {
                       ? ` (${result.distanceKm} km away`
                       : "") +
                     (result.etaMinutes
-                      ? `, ETA ~${result.etaMinutes} min`
+                      ? `, ${result.etaSource === "osrm" ? "road ETA" : "approximate ETA"} ~${result.etaMinutes} min`
                       : "") +
                     (result.distanceKm ? ")" : "") +
                     `. Hospital: ${result.hospitalName || result.hospitalId}.`
@@ -238,24 +232,22 @@ export default function PatientDashboard() {
                 setDispatchMessage(
                   "No ambulances currently available. Your emergency is visible to the control room — help is being arranged."
                 );
-                // Update emergency status
-                await updateDoc(doc(db, "Emergency_Cases", emergencyRef.id), {
-                  Status: "Awaiting Ambulance",
-                  updatedAt: serverTimestamp(),
-                });
               } else if (result.reason === "no_hospital") {
                 setDispatchStatus("no_hospital");
                 setDispatchMessage(
-                  `Ambulance ${result.ambulanceId} is responding, but no hospital could be automatically selected. The control room has been alerted.`
+                  "No suitable hospital bed is currently available. Your emergency remains visible to the control room for manual coordination."
                 );
+              } else if (result.reason === "no_resources") {
+                setDispatchStatus("no_ambulance");
+                setDispatchMessage("Resources changed during dispatch. Your emergency remains visible to the control room for manual coordination.");
               } else {
                 setDispatchStatus("failed");
                 setDispatchMessage(
-                  `Auto-dispatch encountered an issue: ${result.message} The control room will assign manually.`
+                  `Auto-dispatch${result.operation ? ` (${result.operation})` : ""} encountered an issue: ${result.message} The control room will assign manually.`
                 );
               }
             } catch (dispatchErr) {
-              console.error("Dispatch call failed:", dispatchErr);
+              logSosFailure(operation, dispatchErr);
               setDispatchStatus("failed");
               setDispatchMessage(
                 "Auto-dispatch failed. Your emergency is logged and visible to the control room."
@@ -263,9 +255,9 @@ export default function PatientDashboard() {
             }
           }
         } catch (submitError) {
-          console.error("Failed to submit emergency:", submitError);
+          logSosFailure(operation, submitError);
           setPageStatus("error");
-          setError(getErrorMessage(submitError));
+          setError(getSosErrorMessage(operation, submitError));
           submissionStarted.current = false;
         }
       },
@@ -291,7 +283,7 @@ export default function PatientDashboard() {
       },
       { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
     );
-  }, [navigate]);
+  }, [initialEmergencyType, navigate]);
 
   /* ---------------------------------------------------------------- */
   /* Auto-start when Home page requests it                            */
@@ -323,7 +315,6 @@ export default function PatientDashboard() {
         const data = snapshot.data();
 
         setEmergency({ id: snapshot.id, ...data });
-
         const coordinates = getCoordinates(data.location);
         if (coordinates) {
           setPatientLocation((previous) => ({
@@ -364,98 +355,14 @@ export default function PatientDashboard() {
   }, [emergency?.id, location.state?.emergencyId, dispatchStatus]);
 
   /* ---------------------------------------------------------------- */
-  /* STEP 3: Subscribe to assigned ambulance GPS                       */
+  /* STEP 3: Use the server-mirrored location on the authorized case   */
   /* ---------------------------------------------------------------- */
 
-  useEffect(() => {
-    const ambulanceId = emergency?.ambulanceId;
-
-    if (!ambulanceId) {
-      setAmbulanceLocation(null);
-      setGpsUpdatedAt(null);
-      setGpsError("");
-      return undefined;
-    }
-
-    const gpsQuery = query(
-      collection(db, "Ambulance_Locations"),
-      where("ambulanceId", "==", ambulanceId)
-    );
-
-    const unsubscribe = onSnapshot(
-      gpsQuery,
-      (snapshot) => {
-        if (snapshot.empty) {
-          setAmbulanceLocation(null);
-          setGpsUpdatedAt(null);
-          setGpsError(
-            "Waiting for the assigned ambulance to publish GPS coordinates."
-          );
-          return;
-        }
-
-        const records = snapshot.docs.map((item) => ({
-          ...item.data(),
-          documentId: item.id,
-        }));
-
-        records.sort(
-          (a, b) =>
-            (b.updatedAt?.toMillis?.() || 0) -
-            (a.updatedAt?.toMillis?.() || 0)
-        );
-
-        const latest = records[0];
-
-        const coordinates = getCoordinates(
-          latest.location ?? latest.coordinates ?? latest
-        );
-
-        if (!coordinates) {
-          setAmbulanceLocation(null);
-          setGpsError(
-            "An ambulance GPS record exists, but its coordinates are invalid."
-          );
-          return;
-        }
-
-        setAmbulanceLocation(coordinates);
-        setGpsUpdatedAt(latest.updatedAt?.toDate?.() || null);
-        setGpsError("");
-      },
-      (listenerError) => {
-        console.error("Ambulance GPS listener failed:", listenerError);
-        setGpsError(
-          listenerError.code === "permission-denied"
-            ? "Patient access to ambulance GPS is blocked by Firestore rules."
-            : "Unable to retrieve the ambulance's latest GPS location."
-        );
-      }
-    );
-
-    return unsubscribe;
-  }, [emergency?.ambulanceId]);
-
-  /* ---------------------------------------------------------------- */
-  /* STEP 4: Subscribe to hospitals for map markers                    */
-  /* ---------------------------------------------------------------- */
-
-  useEffect(() => {
-    const unsubscribe = onSnapshot(
-      collection(db, "Hospitals"),
-      (snapshot) => {
-        const records = snapshot.docs.map((document) => ({
-          id: document.id,
-          ...document.data(),
-        }));
-        setHospitals(records);
-      },
-      (listenerError) => {
-        console.error("Hospital listener failed:", listenerError);
-      }
-    );
-    return unsubscribe;
-  }, []);
+  const ambulanceLocation = getCoordinates(emergency?.ambulanceLocation);
+  const gpsUpdatedAt = emergency?.ambulanceLocation?.updatedAt?.toDate?.() || null;
+  const gpsError = emergency?.ambulanceId && !ambulanceLocation
+    ? "Waiting for the assigned ambulance to publish GPS coordinates."
+    : "";
 
   /* ---------------------------------------------------------------- */
   /* STEP 5: Calculate ETA when ambulance GPS updates                  */
@@ -467,7 +374,6 @@ export default function PatientDashboard() {
     }
 
     let cancelled = false;
-    etaCalcRef.current = true;
 
     calculateETA(
       ambulanceLocation.latitude,
@@ -508,20 +414,18 @@ export default function PatientDashboard() {
       if (!emergency?.id)
         throw new Error("Emergency record is not available yet.");
 
-      const priority =
-        selectedType === "Cardiac Emergency"
-          ? "Critical"
-          : selectedType === "Road Accident" ||
-            selectedType === "Breathing Difficulty"
-          ? "High"
-          : selectedType
-          ? "Moderate"
-          : null;
-
-      await updateDoc(doc(db, "Emergency_Cases", emergency.id), {
-        EmergencyType: selectedType || null,
-        Priority: priority,
-        updatedAt: serverTimestamp(),
+      await runTransaction(db, async (transaction) => {
+        const emergencyRef = doc(db, "Emergency_Cases", emergency.id);
+        const snapshot = await transaction.get(emergencyRef);
+        if (!snapshot.exists()) throw new Error("Emergency record is not available yet.");
+        const data = snapshot.data();
+        if (data.ambulanceId || data.ambulance_id) {
+          throw new Error("Emergency type is locked after an ambulance is assigned.");
+        }
+        transaction.update(emergencyRef, {
+          EmergencyType: selectedType || null,
+          updatedAt: serverTimestamp(),
+        });
       });
 
       setTypeMessage(
@@ -529,6 +433,7 @@ export default function PatientDashboard() {
       );
     } catch (updateError) {
       console.error("Failed to update emergency type:", updateError);
+      setEmergencyType(emergency?.EmergencyType || "");
       setTypeMessage(getErrorMessage(updateError));
     } finally {
       setSavingType(false);
@@ -743,6 +648,21 @@ export default function PatientDashboard() {
                     ? `Assigned ambulance: ${emergency.ambulanceId}`
                     : "Waiting for ambulance assignment."}
                 </p>
+                {emergency.ambulanceDetails && (
+                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                    {[emergency.ambulanceDetails.vehicleNumber, emergency.ambulanceDetails.serviceProvider, emergency.ambulanceDetails.contactNumber].filter(Boolean).join(" · ")}
+                  </p>
+                )}
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {emergency.hospitalId
+                    ? `Assigned hospital: ${emergency.hospitalDetails?.name || emergency.hospitalId}`
+                    : "Waiting for hospital assignment."}
+                </p>
+                {emergency.hospitalDetails && (
+                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                    {[emergency.hospitalDetails.address, emergency.hospitalDetails.contactNumber].filter(Boolean).join(" · ")}
+                  </p>
+                )}
               </section>
 
               {/* Ambulance tracking + ETA */}
@@ -778,7 +698,9 @@ export default function PatientDashboard() {
                 ) : (
                   <>
                     <h2 className="mt-4 text-xl font-bold">
-                      {ambulanceLocation
+                      {emergency.dispatchEta?.minutes
+                        ? `~${emergency.dispatchEta.minutes} min`
+                        : ambulanceLocation
                         ? "Calculating…"
                         : emergency.ambulanceId
                         ? "Waiting for GPS"
@@ -786,7 +708,9 @@ export default function PatientDashboard() {
                     </h2>
 
                     <p className="mt-2 text-xs leading-5 text-slate-500">
-                      {gpsUpdatedAt
+                      {emergency.dispatchEta?.minutes
+                        ? "Approximate straight-line estimate; live GPS route ETA will replace it when available."
+                        : gpsUpdatedAt
                         ? `Last update: ${gpsUpdatedAt.toLocaleTimeString()}`
                         : gpsError ||
                           "ETA shown after ambulance publishes GPS."}
@@ -847,7 +771,7 @@ export default function PatientDashboard() {
               <select
                 value={emergencyType}
                 onChange={handleEmergencyTypeChange}
-                disabled={savingType}
+                disabled={savingType || Boolean(emergency?.ambulanceId)}
                 className="mt-4 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400 disabled:opacity-60"
               >
                 <option value="">Not selected</option>
@@ -868,20 +792,10 @@ export default function PatientDashboard() {
             <GreenCorridorMap
               patient={patientLocation}
               ambulance={ambulanceLocation}
-              hospital={
-                hospitals.find(
-                  (item) =>
-                    String(item.id || item.hospitalId || "") ===
-                      String(emergency?.hospitalId || "") ||
-                    String(
-                      item.name || item.hospitalName || ""
-                    ).toLowerCase() ===
-                      String(emergency?.hospitalId || "").toLowerCase()
-                ) || null
-              }
-              hospitalId={emergency?.hospitalId}
-              ambulanceId={emergency?.ambulanceId}
-              hospitals={hospitals}
+              hospital={emergency?.hospitalDetails || null}
+              hospitalId={null}
+              ambulanceId={null}
+              hospitals={[]}
             />
 
             {/* Emergency reference + GPS staleness */}

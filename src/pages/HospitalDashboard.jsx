@@ -6,6 +6,8 @@ import {
   doc,
   onSnapshot,
   query,
+  runTransaction,
+  serverTimestamp,
   where,
 } from "firebase/firestore";
 import { calculateETA } from "../api/eta";
@@ -43,6 +45,8 @@ const DEFAULT_CENTER = [19.076, 72.8777];
 
 const ACTIVE_STATUSES = [
   "Pending",
+  "Ambulance Assigned",
+  "Awaiting Ambulance",
   "Assigned",
   "Accepted",
   "En Route",
@@ -202,7 +206,7 @@ function StatCard({ title, value, subtitle, icon: Icon, accent }) {
   );
 }
 
-function VacancyCard({ title, available, total, icon: Icon }) {
+function VacancyCard({ title, available, total, icon: Icon, onAdjust }) {
   const known = available !== null && total !== null;
   const percentage =
     known && total > 0
@@ -219,7 +223,7 @@ function VacancyCard({ title, available, total, icon: Icon }) {
         <div>
           <h3 className="font-semibold text-white">{title}</h3>
           <p className="text-xs text-slate-500">
-            Bed availability
+            Reported capacity
           </p>
         </div>
       </div>
@@ -253,6 +257,10 @@ function VacancyCard({ title, available, total, icon: Icon }) {
           <p className="mt-2 text-xs text-slate-500">
             {percentage}% of total beds available
           </p>
+          {onAdjust && <div className="mt-4 flex gap-2">
+            <button type="button" onClick={() => onAdjust(-1)} disabled={available <= 0} className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 disabled:opacity-40">− Bed available</button>
+            <button type="button" onClick={() => onAdjust(1)} disabled={total !== null && available >= total} className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 disabled:opacity-40">+ Bed available</button>
+          </div>}
         </>
       ) : (
         <p className="mt-5 text-sm text-amber-300">
@@ -296,13 +304,12 @@ export default function HospitalDashboard() {
   const [user, setUser] = useState(null);
   const [staff, setStaff] = useState(null);
   const [hospital, setHospital] = useState(null);
-  const [ambulance, setAmbulance] = useState(null);
-  const [ambulanceLocation, setAmbulanceLocation] = useState(null);
   const [emergencies, setEmergencies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const [eta, setEta] = useState(null);
+  const [capacityError, setCapacityError] = useState("");
 
   useEffect(() => {
     let unsubscribeStaff = null;
@@ -472,92 +479,18 @@ export default function HospitalDashboard() {
     selectedEmergency?.ambulanceID ||
     null;
 
-  useEffect(() => {
-    if (!ambulanceId) {
-      setAmbulance(null);
-      setAmbulanceLocation(null);
-      return;
-    }
-
-    return onSnapshot(
-      doc(db, "Ambulances", ambulanceId),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          setAmbulance({
-            id: snapshot.id,
-            ...snapshot.data(),
-          });
-        } else {
-          setAmbulance({
-            id: ambulanceId,
-          });
-        }
-      },
-      (listenerError) => {
-        console.error("Ambulance listener failed:", listenerError);
+  // Emergency_Cases is the hospital-scoped real-time view; the backend mirrors
+  // only assigned ambulance details/location onto each authorized case.
+  const ambulance = selectedEmergency?.ambulanceDetails
+    ? { ...selectedEmergency.ambulanceDetails, id: ambulanceId }
+    : null;
+  const ambulanceLocation = selectedEmergency?.ambulanceLocation
+    ? {
+        coordinates: findCoordinates(selectedEmergency.ambulanceLocation),
+        updatedAt: selectedEmergency.ambulanceLocation.updatedAt || null,
+        trackingStatus: selectedEmergency.Status || "Unknown",
       }
-    );
-  }, [ambulanceId]);
-
-  useEffect(() => {
-    if (!ambulanceId) {
-      setAmbulanceLocation(null);
-      return;
-    }
-
-    const locationQuery = query(
-      collection(db, "Ambulance_Locations"),
-      where("ambulanceId", "==", ambulanceId)
-    );
-
-    return onSnapshot(
-      locationQuery,
-      (snapshot) => {
-        if (snapshot.empty) {
-          setAmbulanceLocation(null);
-          return;
-        }
-
-        const records = snapshot.docs.map((item) => ({
-          id: item.id,
-          ...item.data(),
-        }));
-
-        records.sort((a, b) => {
-          const aTime =
-            a.updatedAt?.toMillis?.() ??
-            new Date(a.updatedAt || 0).getTime();
-
-          const bTime =
-            b.updatedAt?.toMillis?.() ??
-            new Date(b.updatedAt || 0).getTime();
-
-          return bTime - aTime;
-        });
-
-        const latest = records[0];
-
-        const coordinates = findCoordinates(
-          latest.location,
-          latest.coordinates,
-          latest
-        );
-
-        setAmbulanceLocation(
-          coordinates
-            ? {
-                coordinates,
-                updatedAt: latest.updatedAt || null,
-                trackingStatus: latest.trackingStatus || "Unknown",
-              }
-            : null
-        );
-      },
-      (listenerError) => {
-        console.error("Ambulance location listener failed:", listenerError);
-      }
-    );
-  }, [ambulanceId]);
+    : null;
 
   const hospitalCoordinates = findCoordinates(
     hospital?.location,
@@ -603,12 +536,13 @@ export default function HospitalDashboard() {
     hospitalCoordinates?.[1],
   ]);
 
-  const vacancy = hospital?.vacancy || hospital?.beds || {};
+  const vacancy = hospital?.vacancy || hospital?.beds || hospital?.bed_availability || {};
 
   const generalAvailable = getNumber(
     vacancy.generalAvailable,
     vacancy.generalWardAvailable,
     vacancy.generalWard?.available,
+    vacancy.general_ward_beds?.vacant,
     hospital?.generalWardAvailable,
     hospital?.generalWardVacancy,
     hospital?.availableGeneralBeds
@@ -618,6 +552,7 @@ export default function HospitalDashboard() {
     vacancy.generalTotal,
     vacancy.generalWardTotal,
     vacancy.generalWard?.total,
+    vacancy.general_ward_beds?.total,
     hospital?.generalWardTotal,
     hospital?.totalGeneralBeds
   );
@@ -625,6 +560,7 @@ export default function HospitalDashboard() {
   const icuAvailable = getNumber(
     vacancy.icuAvailable,
     vacancy.icu?.available,
+    vacancy.icu_beds?.vacant,
     hospital?.icuAvailable,
     hospital?.icuVacancy,
     hospital?.availableICUBeds
@@ -633,6 +569,7 @@ export default function HospitalDashboard() {
   const icuTotal = getNumber(
     vacancy.icuTotal,
     vacancy.icu?.total,
+    vacancy.icu_beds?.total,
     hospital?.icuTotal,
     hospital?.totalICUBeds
   );
@@ -641,6 +578,7 @@ export default function HospitalDashboard() {
     vacancy.emergencyAvailable,
     vacancy.emergencyWardAvailable,
     vacancy.emergencyWard?.available,
+    vacancy.vacant_beds,
     hospital?.emergencyWardAvailable,
     hospital?.emergencyWardVacancy,
     hospital?.availableEmergencyBeds
@@ -650,9 +588,45 @@ export default function HospitalDashboard() {
     vacancy.emergencyTotal,
     vacancy.emergencyWardTotal,
     vacancy.emergencyWard?.total,
+    vacancy.total_beds,
     hospital?.emergencyWardTotal,
     hospital?.totalEmergencyBeds
   );
+
+  const adjustCapacity = async (category, delta) => {
+    if (!hospitalId || !hospital) return;
+    const availableAliases = {
+      general: ["bed_availability.general_ward_beds.vacant", "vacancy.generalAvailable", "vacancy.generalWardAvailable", "vacancy.generalWard.available", "beds.generalAvailable", "beds.generalWardAvailable", "beds.generalWard.available", "generalWardAvailable", "generalWardVacancy", "availableGeneralBeds"],
+      icu: ["bed_availability.icu_beds.vacant", "vacancy.icuAvailable", "vacancy.icu.available", "beds.icuAvailable", "beds.icu.available", "icuAvailable", "icuVacancy", "availableICUBeds"],
+      emergency: ["bed_availability.vacant_beds", "vacancy.emergencyAvailable", "vacancy.emergencyWardAvailable", "vacancy.emergencyWard.available", "beds.emergencyAvailable", "beds.emergencyWardAvailable", "beds.emergencyWard.available", "emergencyWardAvailable", "emergencyWardVacancy", "availableEmergencyBeds"],
+    };
+    const totalAliases = {
+      general: ["bed_availability.general_ward_beds.total", "vacancy.generalTotal", "vacancy.generalWardTotal", "vacancy.generalWard.total", "beds.generalTotal", "beds.generalWardTotal", "beds.generalWard.total", "generalWardTotal", "totalGeneralBeds"],
+      icu: ["bed_availability.icu_beds.total", "vacancy.icuTotal", "vacancy.icu.total", "beds.icuTotal", "beds.icu.total", "icuTotal", "totalICUBeds"],
+      emergency: ["bed_availability.total_beds", "vacancy.emergencyTotal", "vacancy.emergencyWardTotal", "vacancy.emergencyWard.total", "beds.emergencyTotal", "beds.emergencyWardTotal", "beds.emergencyWard.total", "emergencyWardTotal", "totalEmergencyBeds"],
+    };
+    const readPath = (object, path) => path.split(".").reduce((value, key) => value?.[key], object);
+    const availablePath = availableAliases[category].find((path) => Number.isFinite(Number(readPath(hospital, path))));
+    if (!availablePath) { setCapacityError(`No existing ${category} availability field was found; no capacity value was changed.`); return; }
+    const totalPath = totalAliases[category].find((path) => Number.isFinite(Number(readPath(hospital, path))));
+    const ref = doc(db, "Hospitals", hospitalId);
+    try {
+      setCapacityError("");
+      await runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists()) throw new Error("Hospital record not found.");
+        const data = snapshot.data();
+        const current = Number(readPath(data, availablePath));
+        const total = totalPath ? Number(readPath(data, totalPath)) : null;
+        const next = current + delta;
+        if (next < 0 || (total !== null && next > total)) throw new Error("Available beds must stay between zero and total capacity.");
+        transaction.update(ref, { [availablePath]: next, updatedAt: serverTimestamp() });
+      });
+    } catch (updateError) {
+      console.error("Hospital capacity update failed:", updateError);
+      setCapacityError(updateError.code === "permission-denied" ? "Firestore rules denied this capacity update." : updateError.message || "Could not update capacity.");
+    }
+  };
 
   const hospitalName =
     hospital?.name ||
@@ -759,6 +733,12 @@ export default function HospitalDashboard() {
           </div>
         )}
 
+        {capacityError && (
+          <div role="alert" className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+            {capacityError}
+          </div>
+        )}
+
         {/* Hospital identity */}
         <section className="mb-6 rounded-2xl border border-slate-800 bg-[#0c1929] p-5 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -842,7 +822,7 @@ export default function HospitalDashboard() {
           <SectionTitle
             icon={BedDouble}
             title="Hospital Bed Availability"
-            subtitle="Current capacity information from Firestore"
+            subtitle="Reported Firestore bed counts; operational availability must be confirmed"
           />
 
           <div className="grid gap-4 md:grid-cols-3">
@@ -851,6 +831,7 @@ export default function HospitalDashboard() {
               available={generalAvailable}
               total={generalTotal}
               icon={BedDouble}
+              onAdjust={(delta) => adjustCapacity("general", delta)}
             />
 
             <VacancyCard
@@ -858,13 +839,15 @@ export default function HospitalDashboard() {
               available={icuAvailable}
               total={icuTotal}
               icon={Activity}
+              onAdjust={(delta) => adjustCapacity("icu", delta)}
             />
 
             <VacancyCard
-              title="Emergency Ward"
+              title="Overall Capacity"
               available={emergencyAvailable}
               total={emergencyTotal}
               icon={Siren}
+              onAdjust={(delta) => adjustCapacity("emergency", delta)}
             />
           </div>
         </section>

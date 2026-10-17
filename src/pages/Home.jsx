@@ -92,6 +92,17 @@ function containsEmergencyCommand(text) {
   return emergencyPatterns.some((pattern) => pattern.test(normalized));
 }
 
+function inferEmergencyType(text) {
+  const normalized = normalizeSpeech(text);
+  if (/\b(cardiac|heart attack|stroke)\b/.test(normalized)) return "Cardiac Emergency";
+  if (/\b(breath|breathing|respirat|cannot breathe|can't breathe)\b/.test(normalized)) return "Breathing Difficulty";
+  if (/\b(pregnan|maternity|obstetric|childbirth|labou?r)\b/.test(normalized)) return "Pregnancy Emergency";
+  if (/\b(accident|crash|collision)\b/.test(normalized)) return "Road Accident";
+  if (/\bfire\b/.test(normalized)) return "Fire Emergency";
+  if (/\bmedical\b/.test(normalized)) return "Medical Emergency";
+  return null;
+}
+
 /*
  * Remove a wake phrase to identify a command spoken in the same sentence.
  */
@@ -164,7 +175,7 @@ function Home() {
   /*
    * Trigger emergency navigation only once.
    */
-  const triggerSOS = useCallback(() => {
+  const triggerSOS = useCallback((recognizedText = "") => {
     if (triggeredRef.current) {
       return;
     }
@@ -181,6 +192,7 @@ function Home() {
     navigate("/patient", {
       state: {
         startSOS: true,
+        emergencyType: inferEmergencyType(recognizedText),
       },
     });
   }, [navigate, stopRecognition]);
@@ -209,7 +221,7 @@ function Home() {
 
       // Direct emergency command without a wake phrase.
       if (containsEmergencyCommand(text)) {
-        triggerSOS();
+        triggerSOS(text);
         return;
       }
 
@@ -222,7 +234,7 @@ function Home() {
 
         // Handle wake phrase and command spoken together.
         if (containsEmergencyCommand(remainingText)) {
-          triggerSOS();
+          triggerSOS(remainingText);
           return;
         }
 
@@ -524,7 +536,7 @@ function Home() {
         <div className="mx-auto mt-10 w-full max-w-md">
           <button
             type="button"
-            onClick={triggerSOS}
+            onClick={() => triggerSOS()}
             className="group flex min-h-48 w-full flex-col items-center justify-center rounded-3xl border border-red-400/30 bg-gradient-to-br from-red-600 to-red-700 px-6 py-7 shadow-xl shadow-red-950/40 transition duration-200 hover:-translate-y-1 hover:from-red-500 hover:to-red-600 focus:outline-none focus:ring-4 focus:ring-red-400/40"
             aria-label="Trigger emergency SOS"
           >
